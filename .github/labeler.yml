@@ -1,0 +1,50 @@
+# Add 'documentation' label to any change to docs files
+documentation:
+  - README.md
+  - docs/**/*
+  - '*.md'
+
+# Add 'test' label to any change to test files
+test:
+  - tests/**/*
+  - '**/*.test.ts'
+  - '**/*.spec.ts'
+  - jest.config.js
+
+# Add 'build' label to any change to build files
+build:
+  - package.json
+  - package-lock.json
+  - tsconfig.json
+  - .eslintrc.js
+  - webpack.config.js
+
+# Add 'ci' label to any change to CI files
+ci:
+  - .github/workflows/*
+  - .github/actions/*
+  - .github/*
+
+# Add 'dependencies' label when dependencies are updated
+dependencies:
+  - package.json
+  - package-lock.json
+
+# Add labels based on source code areas
+protocol:
+  - src/protocol/**/*
+
+database:
+  - src/database/**/*
+
+cache:
+  - src/cache/**/*
+
+core:
+  - src/core/**/*
+
+events:
+  - src/events/**/*
+
+utils:
+  - src/utils/**/*
