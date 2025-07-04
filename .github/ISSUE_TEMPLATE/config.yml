@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/your-org/chia-blockchain-client#readme
+    about: Please check the documentation first
+  - name: Discord Community
+    url: https://discord.gg/chia
+    about: Join our Discord for discussions and quick questions
+  - name: Security Issues
+    url: https://github.com/your-org/chia-blockchain-client/security/policy
+    about: Please report security vulnerabilities privately

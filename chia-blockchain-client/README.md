@@ -1,5 +1,13 @@
 # Chia Blockchain TypeScript Client
 
+[![CI](https://github.com/your-org/chia-blockchain-client/workflows/CI/badge.svg)](https://github.com/your-org/chia-blockchain-client/actions/workflows/ci.yml)
+[![Code Quality](https://github.com/your-org/chia-blockchain-client/workflows/Code%20Quality/badge.svg)](https://github.com/your-org/chia-blockchain-client/actions/workflows/code-quality.yml)
+[![npm version](https://badge.fury.io/js/%40chia%2Fblockchain-client.svg)](https://badge.fury.io/js/%40chia%2Fblockchain-client)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.1.6-blue.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D16.0.0-green.svg)](https://nodejs.org/)
+[![Coverage Status](https://codecov.io/gh/your-org/chia-blockchain-client/branch/main/graph/badge.svg)](https://codecov.io/gh/your-org/chia-blockchain-client)
+
 A production-ready TypeScript client for connecting to the Chia blockchain peer-to-peer network, receiving blocks in real-time, and caching them to a database.
 
 ## Features

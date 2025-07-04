@@ -1,0 +1,199 @@
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better analysis
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run ESLint
+      run: npm run lint -- --format json --output-file eslint-report.json
+      continue-on-error: true
+    
+    - name: Annotate ESLint results
+      uses: ataylorme/eslint-annotate-action@v2
+      if: always()
+      with:
+        report-json: eslint-report.json
+    
+    - name: Check TypeScript strict mode
+      run: |
+        # Ensure strict mode is enabled
+        if ! grep -q '"strict": true' tsconfig.json; then
+          echo "ERROR: TypeScript strict mode is not enabled"
+          exit 1
+        fi
+    
+    - name: Check for console.log statements
+      run: |
+        # Find console.log statements (excluding test files)
+        if grep -r "console\.log" src/ --exclude-dir=tests --exclude-dir=example; then
+          echo "ERROR: Found console.log statements in source code"
+          echo "Please use the logger utility instead"
+          exit 1
+        fi
+    
+    - name: Check for TODO comments
+      run: |
+        # Find TODO comments and create annotations
+        grep -rn "TODO\|FIXME\|HACK" src/ || true
+    
+    - name: Run type coverage
+      run: |
+        npx type-coverage --at-least 90 --strict
+    
+    - name: Check bundle size
+      run: |
+        npm run build
+        
+        # Check the size of the built files
+        echo "Bundle sizes:"
+        find dist -name "*.js" -exec du -h {} \; | sort -h
+        
+        # Fail if any file is larger than 500KB
+        if find dist -name "*.js" -size +500k | grep -q .; then
+          echo "ERROR: Found JavaScript files larger than 500KB"
+          find dist -name "*.js" -size +500k -exec ls -lh {} \;
+          exit 1
+        fi
+    
+    - name: Check for circular dependencies
+      run: |
+        npx madge --circular --extensions ts src/
+    
+    - name: Documentation coverage
+      run: |
+        # Check that all exported functions have JSDoc comments
+        npx documentation coverage src/**/*.ts --shallow
+    
+    - name: License check
+      run: |
+        # Ensure all files have license headers
+        for file in $(find src -name "*.ts"); do
+          if ! head -n 5 "$file" | grep -q "Copyright\|License\|MIT"; then
+            echo "WARNING: $file may be missing license header"
+          fi
+        done
+
+  complexity-analysis:
+    name: Complexity Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Analyze code complexity
+      run: |
+        # Install complexity analysis tools
+        npm install -g complexity-report
+        
+        # Generate complexity report
+        cr --format json --output complexity-report.json src/
+        
+        # Check for functions with high complexity
+        node -e "
+          const report = require('./complexity-report.json');
+          let hasHighComplexity = false;
+          
+          report.reports.forEach(file => {
+            file.functions.forEach(func => {
+              if (func.cyclomatic > 10) {
+                console.log(\`WARNING: High complexity in \${file.path} - \${func.name}: \${func.cyclomatic}\`);
+                hasHighComplexity = true;
+              }
+            });
+          });
+          
+          if (hasHighComplexity) {
+            console.log('Consider refactoring functions with high cyclomatic complexity');
+          }
+        "
+    
+    - name: Check for code duplication
+      run: |
+        npx jscpd src/ --min-lines 10 --min-tokens 50 --format "json" --output jscpd-report.json
+        
+        # Parse and display results
+        node -e "
+          const report = require('./jscpd-report.json');
+          if (report.statistics.total.percentage > 5) {
+            console.log('WARNING: Code duplication is above 5%');
+            console.log(\`Total duplication: \${report.statistics.total.percentage}%\`);
+            process.exit(1);
+          }
+        "
+
+  dependency-check:
+    name: Dependency License Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Check dependency licenses
+      run: |
+        npx license-checker --production --summary --failOn "GPL;AGPL;LGPL;NGPL"
+    
+    - name: Generate dependency report
+      run: |
+        npx license-checker --production --json > licenses.json
+        
+        echo "## Dependency License Report" > license-report.md
+        echo "" >> license-report.md
+        echo "| Package | Version | License |" >> license-report.md
+        echo "|---------|---------|---------|" >> license-report.md
+        
+        node -e "
+          const licenses = require('./licenses.json');
+          Object.entries(licenses).forEach(([pkg, info]) => {
+            const name = pkg.split('@').slice(0, -1).join('@');
+            const version = pkg.split('@').pop();
+            console.log(\`| \${name} | \${version} | \${info.licenses} |\`);
+          });
+        " >> license-report.md
+    
+    - name: Upload license report
+      uses: actions/upload-artifact@v3
+      with:
+        name: license-report
+        path: license-report.md
