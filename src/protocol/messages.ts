@@ -19,7 +19,7 @@ export interface Handshake {
   software_version: string;
   server_port: uint16;
   node_type: NodeType;
-  capabilities: Capability[];
+  capabilities: [number, string][];  // Changed from Capability[] to match serialization
 }
 
 // Handshake acknowledgment
@@ -95,10 +95,31 @@ export type MessageDataMap = {
 };
 
 // Type-safe message creation
-export function createMessage<T extends keyof MessageDataMap>(
-  type: T,
-  data: MessageDataMap[T],
-  id?: uint16
-): { type: T; data: MessageDataMap[T]; id?: uint16 } {
-  return { type, data, id };
+export function createMessage(type: ProtocolMessageTypes, payload: Buffer, id?: number): Buffer {
+  // Calculate total message size
+  // For handshake and other messages without ID, we don't include the ID field at all
+  const hasId = id !== undefined;
+  const totalSize = 1 + (hasId ? 2 : 0) + payload.length;
+  
+  // Create buffer with 4 bytes for length + message size
+  const buffer = Buffer.alloc(4 + totalSize);
+  
+  // Write message length (big-endian)
+  buffer.writeUInt32BE(totalSize, 0);
+  
+  // Write message type
+  buffer.writeUInt8(type, 4);
+  
+  let offset = 5;
+  
+  // Write message ID only if provided (big-endian)
+  if (hasId) {
+    buffer.writeUInt16BE(id, offset);
+    offset += 2;
+  }
+  
+  // Write payload
+  payload.copy(buffer, offset);
+  
+  return buffer;
 }

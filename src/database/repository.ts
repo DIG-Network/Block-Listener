@@ -38,11 +38,12 @@ export class BlockRepository {
   }
 
   async getLatestBlock(): Promise<ChiaBlock | null> {
-    return await this.repository.findOne({
-      order: {
-        height: 'DESC'
-      }
+    const blocks = await this.repository.find({
+      order: { height: 'DESC' },
+      take: 1
     });
+    
+    return blocks.length > 0 ? blocks[0] : null;
   }
 
   async getBlockCount(): Promise<number> {
@@ -125,6 +126,17 @@ export class BlockRepository {
     const result = await this.repository.delete({
       height: MoreThan(height)
     });
+    return result.affected || 0;
+  }
+
+  async clearOldBlocks(beforeHeight: number): Promise<number> {
+    const result = await this.repository
+      .createQueryBuilder()
+      .delete()
+      .from(ChiaBlock)
+      .where('height < :height', { height: beforeHeight })
+      .execute();
+      
     return result.affected || 0;
   }
 

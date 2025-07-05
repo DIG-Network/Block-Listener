@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+
 // Main exports
 export { ChiaBlockchainClient } from './core/client';
 export type { ChiaClientConfig } from './core/client';

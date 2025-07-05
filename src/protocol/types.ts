@@ -1,5 +1,5 @@
 // Protocol version and network constants
-export const PROTOCOL_VERSION = '0.0.35';
+export const PROTOCOL_VERSION = '0.0.36';
 export const NETWORK_ID = 'mainnet';
 
 // Message type constants

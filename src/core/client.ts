@@ -161,16 +161,17 @@ export class ChiaBlockchainClient {
     try {
       this.logger.info(`Connecting to peer ${peerId}`);
       
-      const connection = new ChiaConnection({
-        host,
-        port,
-        networkId: this.config.networkId
-      });
+      const connection = new ChiaConnection(peerId, this.eventEmitter);
       
       // Set up connection event handlers
       connection.on('connected', () => {
         this.logger.info(`Connected to peer ${peerId}`);
         this.eventEmitter.emit('peer:connected', peerId);
+        
+        // Start initial sync after handshake is complete
+        this.startSync().catch(error => {
+          this.logger.error('Failed to start sync', { error });
+        });
       });
       
       connection.on('disconnected', (reason) => {
@@ -193,14 +194,14 @@ export class ChiaBlockchainClient {
       
       connection.on('error', (error: Error) => {
         this.logger.error(`Connection error from ${peerId}`, { error });
-        this.eventEmitter.emit('error', error);
+        this.eventEmitter.emit('error', error as Error);
       });
       
       await connection.connect();
       this.connections.set(peerId, connection);
       
-      // Start initial sync
-      await this.startSync();
+      // Don't start sync here - wait for handshake acknowledgment
+      // await this.startSync();
       
     } catch (error) {
       this.logger.error(`Failed to connect to peer ${peerId}`, { error });
@@ -366,21 +367,16 @@ export class ChiaBlockchainClient {
     
     this.logger.info(`Syncing blocks from ${startHeight} to ${endHeight}`);
     
-    // Request blocks in batches
-    const batchSize = 50;
-    for (let height = startHeight; height <= endHeight; height += batchSize) {
-      const batchEnd = Math.min(height + batchSize - 1, endHeight);
-      
-      const request: RequestBlocks = {
-        start_height: height,
-        end_height: batchEnd,
-        include_transaction_blocks: true
-      };
-      
-      await connection.sendRequest<ProtocolMessageTypes.REQUEST_BLOCKS, RespondBlocks>(
-        ProtocolMessageTypes.REQUEST_BLOCKS,
-        request
-      );
+    // Request blocks one by one for now (can be optimized later)
+    for (let height = startHeight; height <= endHeight; height++) {
+      try {
+        const block = await connection.requestBlock(height);
+        if (block) {
+          await this.handleBlock(block);
+        }
+      } catch (error) {
+        this.logger.error(`Failed to fetch block at height ${height}:`, error);
+      }
     }
   }
 

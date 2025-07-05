@@ -1,23 +1,142 @@
-import * as WebSocket from 'ws';
-import * as tls from 'tls';
 import { EventEmitter } from 'events';
+import WebSocket from 'ws';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import * as dns from 'dns/promises';
+import { Tls } from '@dignetwork/datalayer-driver';
+import { createLogger, Logger } from '../utils/logger';
 import { 
-  ProtocolMessageTypes, 
-  NodeType, 
-  PROTOCOL_VERSION, 
-  NETWORK_ID 
-} from '../protocol/types';
-import { 
-  createMessage, 
-  Handshake, 
+  Handshake,
   HandshakeAck,
   NewPeak,
   RespondBlock,
   RespondBlocks,
-  MessageDataMap
+  createMessage as createProtocolMessage
 } from '../protocol/messages';
-import { encodeMessage, decodeMessage } from '../protocol/serialization';
-import { createLogger, Logger } from '../utils/logger';
+import { 
+  NodeType,
+  ProtocolMessageTypes,
+  NETWORK_ID, 
+  PROTOCOL_VERSION,
+  Capability
+} from '../protocol/types';
+import { ChiaEventEmitter } from '../events/emitter';
+import { encodeMessage, decodeMessage, serializeHandshake, serializeRequestBlock } from '../protocol/serialization';
+import { StreamableDecoder } from '../protocol/serialization';
+
+// DNS introducers for peer discovery
+const DNS_INTRODUCERS = [
+  'dns-introducer.chia.net',
+  'chia.ctrlaltdel.ch',
+  'seeder.dexie.space',
+  'chia.hoffmang.com'
+];
+
+const CONNECTION_TIMEOUT = 2000; // milliseconds
+const MAX_PEERS_TO_FETCH = 10;
+const FULLNODE_PORT = 8444;
+
+// Discover peers function
+async function discoverPeers(): Promise<string[]> {
+  const allPeers: string[] = [];
+  
+  for (const introducer of DNS_INTRODUCERS) {
+    try {
+      const addresses = await dns.resolve4(introducer);
+      allPeers.push(...addresses);
+      console.log(`Found ${addresses.length} peers from ${introducer}`);
+    } catch (error) {
+      console.log(`Failed to resolve ${introducer}:`, error);
+    }
+  }
+  
+  // Remove duplicates
+  return [...new Set(allPeers)];
+}
+
+// Helper function to create a complete message with length prefix
+function createMessage(type: ProtocolMessageTypes, data: any, id?: number): Buffer {
+  // First serialize the data
+  let serializedData: Buffer;
+  
+  if (type === ProtocolMessageTypes.HANDSHAKE) {
+    serializedData = serializeHandshake(data);
+  } else if (type === ProtocolMessageTypes.REQUEST_BLOCK) {
+    serializedData = serializeRequestBlock(data);
+  } else {
+    // For other types, use a generic approach
+    throw new Error(`Unsupported message type: ${type}`);
+  }
+  
+  // Create the message structure
+  const message = {
+    type,
+    id,
+    data: serializedData
+  };
+  
+  // Encode the message
+  const encodedMessage = encodeMessage(message);
+  
+  // Add length prefix
+  const lengthBuffer = Buffer.allocUnsafe(4);
+  lengthBuffer.writeUInt32BE(encodedMessage.length, 0);
+  
+  return Buffer.concat([lengthBuffer, encodedMessage]);
+}
+
+// Helper function to parse incoming messages
+function parseMessage(data: Buffer): { type: ProtocolMessageTypes, id?: number, payload: any } {
+  // Assume data includes the length prefix
+  if (data.length < 4) {
+    throw new Error('Message too short');
+  }
+  
+  const messageLength = data.readUInt32BE(0);
+  const messageData = data.slice(4, 4 + messageLength);
+  
+  const decoded = decodeMessage(messageData);
+  
+  // Decode the payload based on message type
+  let payload: any = decoded.data;
+  
+  // For known message types, decode the streamable data
+  switch (decoded.type) {
+    case ProtocolMessageTypes.HANDSHAKE:
+      // Decode handshake
+      const decoder = new StreamableDecoder(decoded.data);
+      payload = {
+        network_id: decoder.readString(),
+        protocol_version: decoder.readString(), 
+        software_version: decoder.readString(),
+        server_port: decoder.readUint16(),
+        node_type: decoder.readUint8(),
+        capabilities: decoder.readList(() => [decoder.readUint16(), decoder.readString()])
+      };
+      break;
+      
+    case ProtocolMessageTypes.NEW_PEAK:
+      // Decode new peak
+      const peakDecoder = new StreamableDecoder(decoded.data);
+      payload = {
+        header_hash: peakDecoder.readBytes32(),
+        height: peakDecoder.readUint32(),
+        weight: peakDecoder.readUint128(),
+        fork_point_with_previous_peak: peakDecoder.readUint32(),
+        unfinished_reward_block_hash: peakDecoder.readBytes32()
+      };
+      break;
+      
+    // Add more decoders as needed
+  }
+  
+  return {
+    type: decoded.type,
+    id: decoded.id,
+    payload
+  };
+}
 
 export interface ConnectionOptions {
   host: string;
@@ -47,321 +166,289 @@ export interface ConnectionStats {
 
 export class ChiaConnection extends EventEmitter {
   private ws?: WebSocket;
-  private options: Required<ConnectionOptions>;
+  private messageId = 0;
+  private responseHandlers = new Map<number, (response: any) => void>();
+  private eventEmitter: ChiaEventEmitter;
+  private connectionClosed = false;
+  private currentPeerIndex = 0;
+  private bannedPeers = new Set<string>();
   private logger: Logger;
-  private reconnectTimer?: NodeJS.Timeout;
-  private heartbeatTimer?: NodeJS.Timeout;
-  private messageBuffer: Buffer = Buffer.alloc(0);
-  private pendingRequests: Map<number, {
-    resolve: (data: any) => void;
-    reject: (error: Error) => void;
-    timeout: NodeJS.Timeout;
-  }> = new Map();
-  private nextMessageId: number = 1;
-  private stats: ConnectionStats = {
-    connected: false,
+  private messageBuffer = Buffer.alloc(0);
+  private stats = {
     messagesReceived: 0,
     messagesSent: 0,
     bytesReceived: 0,
     bytesSent: 0,
-    reconnectAttempts: 0
   };
 
-  constructor(options: ConnectionOptions) {
+  constructor(private peer: string, eventEmitter: ChiaEventEmitter) {
     super();
-    
-    this.options = {
-      host: options.host,
-      port: options.port,
-      networkId: options.networkId || NETWORK_ID,
-      nodeType: options.nodeType || NodeType.FULL_NODE,
-      certificatePath: options.certificatePath || '',
-      keyPath: options.keyPath || '',
-      caCertPath: options.caCertPath || '',
-      reconnectInterval: options.reconnectInterval || 5000,
-      maxReconnectAttempts: options.maxReconnectAttempts || 10,
-      heartbeatInterval: options.heartbeatInterval || 30000,
-      requestTimeout: options.requestTimeout || 30000
-    };
-    
-    this.logger = createLogger(`Connection:${options.host}:${options.port}`);
+    this.eventEmitter = eventEmitter;
+    this.logger = createLogger(`Connection:${peer}`);
   }
 
   async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        const url = `wss://${this.options.host}:${this.options.port}/ws`;
-        
-        // Create TLS options (simplified for development)
-        const tlsOptions: tls.ConnectionOptions = {
-          rejectUnauthorized: false, // For development only
-          // In production, use proper certificates:
-          // cert: fs.readFileSync(this.options.certificatePath),
-          // key: fs.readFileSync(this.options.keyPath),
-          // ca: this.options.caCertPath ? fs.readFileSync(this.options.caCertPath) : undefined
-        };
-
-        this.logger.info(`Connecting to ${url}`);
-        
-        this.ws = new WebSocket(url, {
-          ...tlsOptions,
-          handshakeTimeout: 10000
-        });
-
-        this.ws.on('open', () => {
-          this.logger.info('WebSocket connection established');
-          this.stats.connected = true;
-          this.stats.connectedAt = new Date();
-          this.stats.reconnectAttempts = 0;
-          
-          // Send handshake
-          this.sendHandshake();
-          
-          // Start heartbeat
-          this.startHeartbeat();
-          
-          resolve();
-        });
-
-        this.ws.on('message', (data: Buffer) => {
-          this.stats.messagesReceived++;
-          this.stats.bytesReceived += data.length;
-          this.stats.lastMessageAt = new Date();
-          
-          this.handleMessage(data);
-        });
-
-        this.ws.on('error', (error: Error) => {
-          this.logger.error('WebSocket error', { error: error.message });
-          this.emit('error', error);
-          reject(error);
-        });
-
-        this.ws.on('close', (code: number, reason: string) => {
-          this.logger.info('WebSocket connection closed', { code, reason });
-          this.stats.connected = false;
-          this.stats.disconnectedAt = new Date();
-          
-          this.cleanup();
-          this.emit('disconnected', { code, reason });
-          
-          // Attempt reconnection
-          if (this.stats.reconnectAttempts < this.options.maxReconnectAttempts) {
-            this.scheduleReconnect();
-          }
-        });
-
-      } catch (error) {
-        this.logger.error('Failed to connect', { error });
-        reject(error);
+    const allPeers = await discoverPeers();
+    
+    // Randomize peer selection
+    const shuffledPeers = [...allPeers].sort(() => Math.random() - 0.5);
+    
+    for (const peer of shuffledPeers) {
+      if (this.bannedPeers.has(peer)) {
+        console.log(`Skipping banned peer: ${peer}`);
+        continue;
       }
+
+      try {
+        await this.connectToPeer(peer);
+        this.peer = peer; // Update current peer on successful connection
+        return;
+      } catch (error: any) {
+        if (error.message?.includes('403')) {
+          console.log(`Peer ${peer} banned our IP, marking as banned`);
+          this.bannedPeers.add(peer);
+        }
+        console.log(`Failed to connect to ${peer}, trying next...`);
+      }
+    }
+    
+    throw new Error('Failed to connect to any peer');
+  }
+
+  private async connectToPeer(peer: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      console.log(`Attempting to connect to peer: ${peer}`);
+      
+      // Generate TLS certificates
+      const sslFolder = path.resolve(os.homedir(), '.chia', 'blockchain-client', 'ssl');
+      const certFile = path.join(sslFolder, 'public_client.crt');
+      const keyFile = path.join(sslFolder, 'public_client.key');
+
+      // Create SSL folder if it doesn't exist
+      if (!fs.existsSync(sslFolder)) {
+        fs.mkdirSync(sslFolder, { recursive: true });
+      }
+
+      // Create TLS instance which will generate certificates if they don't exist
+      const tlsInstance = new Tls(certFile, keyFile);
+
+      // Read the generated certificates
+      const cert = fs.readFileSync(certFile);
+      const key = fs.readFileSync(keyFile);
+      
+      // Connect with certificates, matching your working setup
+      this.ws = new WebSocket(`wss://${peer}:${FULLNODE_PORT}/ws`, {
+        cert: cert,
+        key: key,
+        rejectUnauthorized: false,
+        handshakeTimeout: 10000,
+      });
+
+      this.ws.on('open', async () => {
+        console.log(`Connected to ${peer}`);
+        try {
+          // Send handshake immediately
+          await this.sendHandshake();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      this.ws.on('message', (data: Buffer) => {
+        console.log(`Received ${data.length} bytes from ${peer}`);
+        console.log('Raw data hex:', data.toString('hex').slice(0, 100) + '...');
+        this.handleMessage(data);
+      });
+
+      this.ws.on('error', (error) => {
+        console.error('WebSocket error:', error.message);
+        reject(error);
+      });
+
+      this.ws.on('close', (code, reason) => {
+        console.log(`Connection closed: ${code} - ${reason.toString()}`);
+        this.connectionClosed = true;
+        
+        if (code === 1002 && reason.toString() === '-6') {
+          reject(new Error('INCOMPATIBLE_NETWORK_ID'));
+        } else {
+          reject(new Error(`Connection closed: ${code} - ${reason.toString()}`));
+        }
+      });
+
+      this.ws.on('unexpected-response', (request: any, response: any) => {
+        console.log(`Unexpected response from ${peer}: ${response.statusCode} ${response.statusMessage}`);
+        if (response.statusCode === 403) {
+          reject(new Error(`403 Forbidden from ${peer}`));
+        } else {
+          reject(new Error(`Unexpected response: ${response.statusCode}`));
+        }
+      });
     });
   }
 
-  private sendHandshake(): void {
-    const handshake = createMessage(ProtocolMessageTypes.HANDSHAKE, {
-      network_id: this.options.networkId,
-      protocol_version: PROTOCOL_VERSION,
-      software_version: '1.0.0',
-      server_port: 8444,
-      node_type: this.options.nodeType,
-      capabilities: []
-    });
+  private async sendHandshake(): Promise<void> {
+    // Match the Rust SDK exactly - connect as WALLET to FULL_NODE
+    const handshake: Handshake = {
+      network_id: 'mainnet',
+      protocol_version: '0.0.37',
+      software_version: '0.0.0',  // Match Rust SDK
+      server_port: 0,  // 0 for wallet clients per Rust SDK
+      node_type: NodeType.WALLET,  // Connect as wallet (6)
+      capabilities: [
+        [1, '1'], // BASE
+        [2, '1'], // BLOCK_HEADERS  
+        [3, '1'], // RATE_LIMITS_V2
+      ]
+    };
+
+    console.log('Sending handshake:', handshake);
     
-    this.sendMessage(handshake);
+    const message = createMessage(
+      ProtocolMessageTypes.HANDSHAKE,
+      handshake,
+      undefined // No message ID for handshake
+    );
+    
+    // Log the hex for debugging
+    console.log('Handshake hex:', message.toString('hex'));
+    console.log('Handshake length:', message.length, 'bytes');
+    
+    // Log breakdown
+    console.log('Message breakdown:');
+    console.log('- Length prefix:', message.slice(0, 4).toString('hex'));
+    console.log('- Message type:', message.slice(4, 5).toString('hex'));
+    console.log('- Optional ID:', message.slice(5, 6).toString('hex'));
+    console.log('- Payload length:', message.slice(6, 10).toString('hex'));
+    console.log('- Payload:', message.slice(10).toString('hex'));
+    
+    this.ws!.send(message);
+    this.stats.messagesSent++;
+    this.stats.bytesSent += message.length;
   }
 
   private handleMessage(data: Buffer): void {
     try {
-      // Append to message buffer
+      // Add to message buffer
       this.messageBuffer = Buffer.concat([this.messageBuffer, data]);
+      this.stats.bytesReceived += data.length;
       
-      // Try to decode messages from buffer
+      // Process complete messages from buffer
       while (this.messageBuffer.length >= 4) {
-        // Read message length (first 4 bytes)
+        // Read message length
         const messageLength = this.messageBuffer.readUInt32BE(0);
         
+        // Check if we have the complete message
         if (this.messageBuffer.length < 4 + messageLength) {
-          // Not enough data for complete message
-          break;
+          break; // Wait for more data
         }
         
         // Extract complete message
-        const messageData = this.messageBuffer.slice(4, 4 + messageLength);
+        const fullMessage = this.messageBuffer.slice(0, 4 + messageLength);
         this.messageBuffer = this.messageBuffer.slice(4 + messageLength);
         
-        // Decode and process message
-        const message = decodeMessage(messageData);
-        this.processMessage(message);
+        // Parse the message
+        const { type, id, payload } = parseMessage(fullMessage);
+        this.stats.messagesReceived++;
+        
+        console.log(`Received message type: ${type}, id: ${id}`);
+        
+        // Handle based on message type
+        switch (type) {
+          case ProtocolMessageTypes.HANDSHAKE:
+            // Peer's handshake response
+            const peerHandshake = payload as Handshake;
+            console.log('Received handshake from peer:', peerHandshake);
+            if (peerHandshake.node_type === NodeType.FULL_NODE) {
+              console.log('Connected to full node successfully!');
+              this.eventEmitter.emit('peer:connected', this.peer);
+            }
+            break;
+            
+          case ProtocolMessageTypes.HANDSHAKE_ACK:
+            console.log('Handshake acknowledged!');
+            break;
+            
+          case ProtocolMessageTypes.NEW_PEAK:
+            const newPeak = payload as NewPeak;
+            console.log(`New peak at height ${newPeak.height}`);
+            // Emit event so client can request the block
+            this.emit('new_peak', newPeak);
+            break;
+            
+          case ProtocolMessageTypes.RESPOND_BLOCK:
+            // Handle block response
+            if (id !== undefined && this.responseHandlers.has(id)) {
+              const handler = this.responseHandlers.get(id);
+              this.responseHandlers.delete(id);
+              handler!(payload);
+            }
+            break;
+            
+          default:
+            console.log(`Unhandled message type: ${type}`);
+            // Handle response callbacks for other message types
+            if (id !== undefined && this.responseHandlers.has(id)) {
+              const handler = this.responseHandlers.get(id);
+              this.responseHandlers.delete(id);
+              handler!(payload);
+            }
+        }
       }
     } catch (error) {
-      this.logger.error('Failed to handle message', { error });
-      this.emit('error', error);
+      console.error('Error handling message:', error);
     }
   }
 
-  private processMessage(message: any): void {
-    this.logger.debug('Received message', { type: message.type });
+  async requestBlock(height: number): Promise<any> {
+    const id = this.messageId++;
     
-    // Handle response to pending request
-    if (message.id && this.pendingRequests.has(message.id)) {
-      const pending = this.pendingRequests.get(message.id)!;
-      clearTimeout(pending.timeout);
-      this.pendingRequests.delete(message.id);
-      pending.resolve(message.data);
-      return;
-    }
+    const request = {
+      height,
+      include_transaction_block: true
+    };
     
-    // Handle specific message types
-    switch (message.type) {
-      case ProtocolMessageTypes.HANDSHAKE_ACK:
-        const ack = message.data as HandshakeAck;
-        if (ack.success) {
-          this.logger.info('Handshake successful');
-          this.emit('connected');
-        } else {
-          this.logger.error('Handshake failed');
-          this.disconnect();
-        }
-        break;
-        
-      case ProtocolMessageTypes.NEW_PEAK:
-        this.emit('new_peak', message.data as NewPeak);
-        break;
-        
-      case ProtocolMessageTypes.RESPOND_BLOCK:
-        this.emit('block', message.data as RespondBlock);
-        break;
-        
-      case ProtocolMessageTypes.RESPOND_BLOCKS:
-        this.emit('blocks', message.data as RespondBlocks);
-        break;
-        
-      case ProtocolMessageTypes.PING:
-        // Respond with pong
-        this.sendMessage(createMessage(ProtocolMessageTypes.PONG, {}));
-        break;
-        
-      default:
-        this.emit('message', message);
-    }
-  }
-
-  sendMessage<T extends keyof MessageDataMap>(
-    message: { type: T; data: MessageDataMap[T]; id?: number }
-  ): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.warn('Cannot send message: connection not open');
-      return;
-    }
+    const message = createMessage(
+      ProtocolMessageTypes.REQUEST_BLOCK,
+      request,
+      id
+    );
     
-    try {
-      const encoded = encodeMessage(message);
-      const lengthBuffer = Buffer.allocUnsafe(4);
-      lengthBuffer.writeUInt32BE(encoded.length, 0);
-      
-      const fullMessage = Buffer.concat([lengthBuffer, encoded]);
-      
-      this.ws.send(fullMessage);
-      this.stats.messagesSent++;
-      this.stats.bytesSent += fullMessage.length;
-      
-      this.logger.debug('Sent message', { type: message.type });
-    } catch (error) {
-      this.logger.error('Failed to send message', { error });
-      this.emit('error', error);
-    }
-  }
-
-  async sendRequest<T extends keyof MessageDataMap, R>(
-    type: T,
-    data: MessageDataMap[T],
-    expectedResponseType?: ProtocolMessageTypes
-  ): Promise<R> {
     return new Promise((resolve, reject) => {
-      const id = this.nextMessageId++;
+      this.responseHandlers.set(id, resolve);
       
-      // Set up timeout
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(new Error(`Request timeout for message type ${type}`));
-      }, this.options.requestTimeout);
+      this.ws!.send(message);
       
-      // Store pending request
-      this.pendingRequests.set(id, { resolve, reject, timeout });
-      
-      // Send message with ID
-      this.sendMessage({ type, data, id });
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (this.responseHandlers.has(id)) {
+          this.responseHandlers.delete(id);
+          reject(new Error('Request timeout'));
+        }
+      }, 30000);
     });
   }
 
-  private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.sendMessage(createMessage(ProtocolMessageTypes.PING, {}));
-      }
-    }, this.options.heartbeatInterval);
-  }
-
-  private scheduleReconnect(): void {
-    this.stats.reconnectAttempts++;
-    const delay = this.options.reconnectInterval * Math.min(this.stats.reconnectAttempts, 5);
-    
-    this.logger.info(`Scheduling reconnection attempt ${this.stats.reconnectAttempts} in ${delay}ms`);
-    
-    this.reconnectTimer = setTimeout(() => {
-      this.connect().catch(error => {
-        this.logger.error('Reconnection failed', { error });
-      });
-    }, delay);
-  }
-
-  private cleanup(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = undefined;
-    }
-    
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = undefined;
-    }
-    
-    // Reject all pending requests
-    for (const [id, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error('Connection closed'));
-    }
-    this.pendingRequests.clear();
-    
-    // Clear message buffer
-    this.messageBuffer = Buffer.alloc(0);
-  }
-
   disconnect(): void {
-    this.logger.info('Disconnecting');
-    
     if (this.ws) {
-      this.ws.removeAllListeners();
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.close(1000, 'Client disconnect');
-      }
+      this.ws.close();
       this.ws = undefined;
     }
-    
-    this.cleanup();
-    this.emit('disconnected', { code: 1000, reason: 'Client disconnect' });
   }
 
   isConnected(): boolean {
-    return this.ws !== undefined && this.ws.readyState === WebSocket.OPEN;
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   getStats(): ConnectionStats {
-    return { ...this.stats };
-  }
-
-  getPeerId(): string {
-    return `${this.options.host}:${this.options.port}`;
+    return {
+      connected: this.isConnected(),
+      messagesReceived: this.stats.messagesReceived,
+      messagesSent: this.stats.messagesSent,
+      bytesReceived: this.stats.bytesReceived,
+      bytesSent: this.stats.bytesSent,
+      reconnectAttempts: 0
+    };
   }
 }

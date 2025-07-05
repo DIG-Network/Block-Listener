@@ -200,13 +200,16 @@ export class StreamableDecoder {
 export function encodeMessage(message: ProtocolMessage): Buffer {
   const encoder = new StreamableEncoder();
   
-  // Write message header
+  // Message format: type (uint8), id (Optional[uint16]), data (bytes)
+  
+  // 1. Write message type
   encoder.writeUint8(message.type);
+  
+  // 2. Write optional ID
   encoder.writeOptional(message.id, (id) => encoder.writeUint16(id));
   
-  // Encode message data based on type
-  const dataBuffer = encodeMessageData(message.type, message.data);
-  encoder.writeBytes(dataBuffer);
+  // 3. Write data as bytes (with length prefix)
+  encoder.writeBytes(Buffer.isBuffer(message.data) ? message.data : Buffer.from(message.data));
   
   return encoder.toBuffer();
 }
@@ -214,19 +217,20 @@ export function encodeMessage(message: ProtocolMessage): Buffer {
 export function decodeMessage(buffer: Buffer): ProtocolMessage {
   const decoder = new StreamableDecoder(buffer);
   
-  // Read message header
+  // 1. Read message type
   const type = decoder.readUint8() as ProtocolMessageTypes;
+  
+  // 2. Read optional ID
   const id = decoder.readOptional(() => decoder.readUint16()) || undefined;
   
-  // Decode message data
-  const dataBuffer = decoder.readBytes();
-  const data = decodeMessageData(type, dataBuffer);
+  // 3. Read data bytes
+  const data = decoder.readBytes();
   
   return { type, id, data };
 }
 
 // Helper functions for encoding/decoding specific message types
-function encodeMessageData(type: ProtocolMessageTypes, data: any): Buffer {
+export function encodeMessageData(type: ProtocolMessageTypes, data: any): Buffer {
   const encoder = new StreamableEncoder();
   
   switch (type) {
@@ -236,10 +240,20 @@ function encodeMessageData(type: ProtocolMessageTypes, data: any): Buffer {
       encoder.writeString(data.software_version);
       encoder.writeUint16(data.server_port);
       encoder.writeUint8(data.node_type);
-      encoder.writeList(data.capabilities, (cap) => {
-        encoder.writeString(cap.capability);
-        encoder.writeString(cap.value);
-      });
+      
+      // Write capabilities as list of tuples
+      const capabilities = data.capabilities || [];
+      encoder.writeUint32(capabilities.length);
+      for (const cap of capabilities) {
+        if (Array.isArray(cap)) {
+          encoder.writeUint16(cap[0]);
+          encoder.writeString(cap[1]);
+        } else {
+          // This shouldn't happen with our current implementation
+          encoder.writeUint16(1);
+          encoder.writeString('1');
+        }
+      }
       break;
       
     case ProtocolMessageTypes.HANDSHAKE_ACK:
@@ -337,4 +351,39 @@ function decodeMessageData(type: ProtocolMessageTypes, buffer: Buffer): any {
       const jsonStr = decoder.readBytes().toString('utf8');
       return jsonStr ? JSON.parse(jsonStr) : {};
   }
+}
+
+// Helper function to serialize handshake message directly
+export function serializeHandshake(handshakeData: any): Buffer {
+  const encoder = new StreamableEncoder();
+  
+  // Write handshake fields directly
+  encoder.writeString(handshakeData.network_id);
+  encoder.writeString(handshakeData.protocol_version);
+  encoder.writeString(handshakeData.software_version);
+  encoder.writeUint16(handshakeData.server_port);
+  encoder.writeUint8(handshakeData.node_type);
+  
+  // Write capabilities as list of tuples
+  const capabilities = handshakeData.capabilities || [];
+  encoder.writeUint32(capabilities.length);
+  for (const cap of capabilities) {
+    if (Array.isArray(cap)) {
+      encoder.writeUint16(cap[0]);
+      encoder.writeString(cap[1]);
+    } else {
+      encoder.writeUint16(1);
+      encoder.writeString('1');
+    }
+  }
+  
+  return encoder.toBuffer();
+}
+
+// Helper function to serialize request block
+export function serializeRequestBlock(data: any): Buffer {
+  const encoder = new StreamableEncoder();
+  encoder.writeUint32(data.height);
+  encoder.writeBoolean(data.include_transaction_block);
+  return encoder.toBuffer();
 }
