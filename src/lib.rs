@@ -6,8 +6,6 @@ mod peer;
 mod protocol;
 mod event_emitter;
 mod error;
-mod peer_discovery;
-mod cert_manager;
 
 pub use error::ChiaError;
 pub use event_emitter::ChiaBlockListener;

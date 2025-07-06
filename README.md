@@ -11,6 +11,12 @@ This project provides a native Node.js module written in Rust that:
 - Emits JavaScript events when new blocks are received
 - Supports multiple peer connections
 
+**Design Philosophy**: This module gives full control to the JavaScript side for peer management. This allows developers to:
+- Implement custom peer discovery (DNS, static lists, etc.)
+- Manage certificates from any source
+- Add/remove peers dynamically based on their needs
+- Build more complex peer selection strategies
+
 ## Features
 
 - **Native Performance**: Written in Rust for optimal performance
@@ -156,13 +162,61 @@ Example:
 RUST_LOG=chia_block_listener=debug node example.js
 ```
 
-## Example
+## Examples
 
-See `example.js` for a complete working example that:
+Two example files are provided:
+
+### `example.js`
+A simple example that:
 - Loads certificates from your Chia installation
 - Connects to a local Chia full node
 - Logs all received blocks
 - Handles graceful shutdown
+
+### `example-with-discovery.js`
+A more advanced example that:
+- Implements DNS-based peer discovery
+- Connects to multiple discovered peers
+- Tracks statistics about received blocks
+- Shows periodic status updates
+
+### Peer Discovery Example
+
+Here's how you might implement DNS-based peer discovery in Node.js:
+
+```javascript
+const dns = require('dns').promises;
+
+async function discoverPeers() {
+  const introducers = [
+    'dns-introducer.chia.net',
+    'chia.ctrlaltdel.ch',
+    'seeder.dexie.space'
+  ];
+  
+  const peers = [];
+  
+  for (const introducer of introducers) {
+    try {
+      const addresses = await dns.resolve4(introducer);
+      peers.push(...addresses.map(ip => ({ host: ip, port: 8444 })));
+    } catch (err) {
+      console.warn(`Failed to resolve ${introducer}:`, err.message);
+    }
+  }
+  
+  return peers;
+}
+
+// Usage
+const peers = await discoverPeers();
+const listener = new ChiaBlockListener();
+
+// Add discovered peers
+for (const peer of peers.slice(0, 5)) { // Connect to first 5 peers
+  listener.addPeer(peer.host, peer.port, 'mainnet', certs.cert, certs.key, certs.ca);
+}
+```
 
 ## Building from Source
 

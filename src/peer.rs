@@ -11,32 +11,41 @@ use tracing::{debug, error, info, warn};
 
 #[derive(Clone)]
 pub struct PeerConnection {
-    addr: std::net::SocketAddr,
+    host: String,
+    port: u16,
     network_id: String,
-    certs: crate::cert_manager::ChiaCerts,
+    tls_cert: Vec<u8>,
+    tls_key: Vec<u8>,
+    ca_cert: Vec<u8>,
 }
 
 impl PeerConnection {
     pub fn new(
-        addr: std::net::SocketAddr,
+        host: String,
+        port: u16,
         network_id: String,
-        certs: crate::cert_manager::ChiaCerts,
+        tls_cert: Vec<u8>,
+        tls_key: Vec<u8>,
+        ca_cert: Vec<u8>,
     ) -> Self {
         Self {
-            addr,
+            host,
+            port,
             network_id,
-            certs,
+            tls_cert,
+            tls_key,
+            ca_cert,
         }
     }
 
     pub async fn connect(&self) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, ChiaError> {
-        info!("Connecting to peer at {}", self.addr);
+        info!("Connecting to peer at {}:{}", self.host, self.port);
 
         // Create TLS connector
-        let identity = Identity::from_pkcs8(&self.certs.cert, &self.certs.key)
+        let identity = Identity::from_pkcs8(&self.tls_cert, &self.tls_key)
             .map_err(|e| ChiaError::Tls(e.to_string()))?;
         
-        let ca_cert = Certificate::from_pem(&self.certs.ca)
+        let ca_cert = Certificate::from_pem(&self.ca_cert)
             .map_err(|e| ChiaError::Tls(e.to_string()))?;
 
         let tls_connector = TlsConnector::builder()
@@ -47,7 +56,7 @@ impl PeerConnection {
             .map_err(|e| ChiaError::Tls(e.to_string()))?;
 
         let connector = Connector::NativeTls(tls_connector);
-        let url = format!("wss://{}/ws", self.addr);
+        let url = format!("wss://{}:{}/ws", self.host, self.port);
 
         let (ws_stream, _) = connect_async_tls_with_config(
             &url,
@@ -73,7 +82,7 @@ impl PeerConnection {
             network_id: self.network_id.clone(),
             protocol_version: "0.0.36".to_string(),
             software_version: "2.4.0".to_string(),
-            server_port: self.addr.port(),
+            server_port: self.port,
             node_type: NodeType::FullNode,
             capabilities: vec![],
         };
