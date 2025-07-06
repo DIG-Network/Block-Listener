@@ -1,32 +1,32 @@
 {
   "name": "chia-block-listener",
   "version": "0.1.0",
-  "description": "Rust-based Chia block listener with NAPI bindings",
+  "description": "Chia blockchain block listener with event emitter for Node.js",
   "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics",
-    "build:release": "cargo-cp-artifact -nc index.node -- cargo build --release --message-format=json-render-diagnostics",
-    "build:debug": "npm run build",
-    "test": "cargo test",
-    "example": "node example/index.js"
-  },
-  "keywords": [
-    "chia",
-    "blockchain",
-    "napi",
-    "rust"
-  ],
-  "files": [
-    "index.js",
-    "index.node"
-  ],
+  "types": "index.d.ts",
   "napi": {
     "name": "chia-block-listener",
     "triples": {}
   },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm",
+    "artifacts": "napi artifacts",
+    "version": "napi version"
+  },
+  "keywords": [
+    "chia",
+    "blockchain",
+    "event-emitter",
+    "napi",
+    "rust"
+  ],
+  "author": "",
+  "license": "MIT",
   "devDependencies": {
-    "cargo-cp-artifact": "^0.1"
+    "@napi-rs/cli": "^2.18.0",
+    "@types/node": "^20.0.0"
   },
   "engines": {
     "node": ">= 14"

@@ -1,42 +1,75 @@
-# Chia Block Listener (Rust + NAPI)
+# Chia Block Listener
 
-A high-performance Chia blockchain block listener built in Rust with Node.js bindings via NAPI-rs. This library provides real-time block notifications through an event emitter interface.
+A Rust-based event emitter for Chia blockchain that listens for new blocks from peers and emits events to Node.js applications via NAPI bindings.
+
+## Overview
+
+This project provides a native Node.js module written in Rust that:
+- Connects to Chia full nodes using the native Chia peer protocol
+- Performs the Chia handshake with TLS certificates
+- Listens for new block announcements
+- Emits JavaScript events when new blocks are received
+- Supports multiple peer connections
 
 ## Features
 
-- **High Performance**: Built in Rust for maximum efficiency
-- **Real-time Block Events**: Get notified when new blocks arrive
-- **Event Emitter Interface**: Familiar Node.js event-based API
-- **WebSocket Connection**: Direct connection to Chia full nodes
-- **Database Storage**: SQLite storage for block history
-- **TLS Support**: Secure connections with certificate support
-- **Cross-platform**: Works on Linux, macOS, and Windows
+- **Native Performance**: Written in Rust for optimal performance
+- **Event-Based Architecture**: Uses Node.js event emitters for easy integration
+- **TypeScript Support**: Full TypeScript definitions included
+- **Async/Await API**: Modern async API design
+- **Multiple Peers**: Connect to multiple Chia nodes simultaneously
+- **TLS Support**: Full TLS certificate support for secure connections
 
 ## Installation
 
+First, ensure you have Rust installed:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Install dependencies and build:
 ```bash
 npm install
-npm run build:release
+npm run build
 ```
 
 ## Usage
 
 ```javascript
-const { ChiaBlockListener } = require('chia-block-listener');
+const { ChiaBlockListener, loadChiaCerts, initTracing } = require('chia-block-listener');
 
 async function main() {
-    const listener = new ChiaBlockListener();
+  // Initialize logging (optional)
+  initTracing();
 
-    // Set up event handlers
-    listener.on('newBlock', (block) => {
-        console.log('New block:', block);
+  // Create a new block listener
+  const listener = new ChiaBlockListener();
+
+  // Load certificates from your Chia installation
+  const certs = loadChiaCerts('/home/user/.chia/mainnet');
+
+  // Add one or more peers
+  listener.addPeer(
+    '192.168.1.100',  // Peer IP address
+    8444,             // Port (default: 8444)
+    'mainnet',        // Network ID
+    certs.cert,       // TLS certificate
+    certs.key,        // TLS key
+    certs.ca          // CA certificate
+  );
+
+  // Start listening for blocks
+  listener.start((block) => {
+    console.log('New block:', {
+      height: block.height,
+      weight: block.weight,
+      header_hash: block.header_hash,
+      timestamp: new Date(block.timestamp * 1000)
     });
+  });
 
-    // Connect to Chia node
-    await listener.connect('localhost', 8444, 'mainnet');
-    
-    // Start listening for blocks
-    await listener.startListening();
+  // Stop when done
+  // listener.stop();
 }
 
 main().catch(console.error);
@@ -44,112 +77,113 @@ main().catch(console.error);
 
 ## API Reference
 
-### `new ChiaBlockListener()`
+### `ChiaBlockListener`
 
-Creates a new instance of the block listener.
+The main class for listening to Chia blockchain events.
 
-### `connect(host, port, networkId, certPath?, keyPath?)`
+#### Constructor
+```typescript
+new ChiaBlockListener()
+```
 
-Connects to a Chia full node.
+#### Methods
 
-- `host`: The hostname or IP address of the Chia node
-- `port`: The port number (usually 8444 for mainnet)
-- `networkId`: The network ID ('mainnet', 'testnet10', 'testnet11')
-- `certPath`: Optional path to client certificate
-- `keyPath`: Optional path to client private key
+##### `addPeer(host, port, networkId, tlsCert, tlsKey, caCert)`
+Add a peer to connect to.
 
-### `startListening()`
+- `host`: String - The IP address or hostname of the peer
+- `port`: Number - The port number (typically 8444)
+- `networkId`: String - The network ID ('mainnet' or 'testnet11')
+- `tlsCert`: Buffer - The TLS certificate
+- `tlsKey`: Buffer - The TLS private key
+- `caCert`: Buffer - The CA certificate
 
-Starts listening for new blocks. Must be called after `connect()`.
+##### `start(callback)`
+Start listening for blocks from all added peers.
 
-### `on(event, callback)`
+- `callback`: Function - Called when a new block is received
 
-Registers an event handler.
+##### `stop()`
+Stop listening for blocks.
 
-Events:
-- `newBlock`: Fired when a new block is received
-- `newPeak`: Fired when a new peak is announced
-- `connected`: Fired when connected to the node
-- `disconnected`: Fired when disconnected from the node
-- `error`: Fired when an error occurs
+##### `isRunning()`
+Check if the listener is currently running.
 
-### `off(event)`
+Returns: `boolean`
 
-Removes an event handler.
+### Helper Functions
 
-### `getBlockCount()`
+#### `loadChiaCerts(chiaRoot)`
+Load Chia certificates from the filesystem.
 
-Returns the number of blocks stored in the local database.
+- `chiaRoot`: String - The Chia root directory (e.g., `~/.chia/mainnet`)
 
-### `disconnect()`
+Returns: `{ cert: Buffer, key: Buffer, ca: Buffer }`
 
-Disconnects from the Chia node.
+#### `initTracing()`
+Initialize logging/tracing. Set the `RUST_LOG` environment variable to control log levels.
 
 ## Block Event Data
 
-The `newBlock` event provides the following data:
+When a new block is received, the callback receives an object with:
 
-```javascript
-{
-    header_hash: string,        // Block header hash
-    height: number,             // Block height
-    weight: string,             // Total weight (as string due to large numbers)
-    timestamp: number,          // Unix timestamp
-    prev_header_hash: string,   // Previous block's header hash
-    farmer_puzzle_hash: string, // Farmer's puzzle hash
-    pool_puzzle_hash: string    // Pool's puzzle hash
+```typescript
+interface ChiaBlock {
+  height: number;        // Block height
+  weight: string;        // Chain weight (as string due to large numbers)
+  header_hash: string;   // Block header hash (hex)
+  timestamp: number;     // Block timestamp (seconds since epoch)
 }
 ```
 
+## Protocol Details
+
+This implementation:
+1. Establishes WebSocket connections to Chia peers on port 8444
+2. Performs TLS handshake using Chia certificates
+3. Sends the Chia protocol handshake message
+4. Listens for `NewPeak` messages from peers
+5. Requests full block data when new peaks are announced
+6. Emits events when `RespondBlock` messages are received
+
 ## Environment Variables
 
-- `CHIA_HOST`: Default host for the Chia node
-- `CHIA_PORT`: Default port for the Chia node
-- `CHIA_NETWORK`: Default network ID
-- `CHIA_CERT_PATH`: Path to client certificate
-- `CHIA_KEY_PATH`: Path to client private key
+- `CHIA_ROOT`: Override the default Chia root directory
+- `RUST_LOG`: Control logging levels (e.g., `debug`, `info`, `warn`, `error`)
 
-## Building from Source
-
-### Prerequisites
-
-- Rust 1.70 or later
-- Node.js 14 or later
-- npm or yarn
-
-### Build Steps
-
+Example:
 ```bash
-# Install dependencies
-npm install
-
-# Build debug version
-npm run build
-
-# Build release version
-npm run build:release
-
-# Run tests
-npm test
+RUST_LOG=chia_block_listener=debug node example.js
 ```
 
 ## Example
 
-See the `example/` directory for a complete example of using the library.
+See `example.js` for a complete working example that:
+- Loads certificates from your Chia installation
+- Connects to a local Chia full node
+- Logs all received blocks
+- Handles graceful shutdown
 
+## Building from Source
+
+1. Clone the repository
+2. Install Rust and Node.js
+3. Run `npm install`
+4. Run `npm run build`
+
+## Development
+
+For development builds with debug symbols:
 ```bash
-node example/index.js
+npm run build:debug
 ```
 
-## Technical Details
+## Architecture
 
-This library uses:
-- **Rust**: Core implementation for performance and reliability
-- **NAPI-rs**: Node.js bindings
-- **tokio**: Async runtime
-- **tokio-tungstenite**: WebSocket client
-- **chia-protocol**: Chia protocol message handling
-- **SQLite**: Local block storage
+The project consists of:
+- **Rust Core** (`src/`): Handles peer connections, protocol messages, and block parsing
+- **NAPI Bindings**: Exposes Rust functionality to JavaScript
+- **TypeScript Definitions** (`index.d.ts`): Provides type safety for TypeScript users
 
 ## License
 
@@ -158,3 +192,20 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Troubleshooting
+
+### Certificate Loading Issues
+Make sure your `CHIA_ROOT` points to a valid Chia installation with certificates in:
+- `config/ssl/full_node/private_full_node.crt`
+- `config/ssl/full_node/private_full_node.key`
+- `config/ssl/ca/chia_ca.crt`
+
+### Connection Issues
+- Ensure the peer is running and accessible
+- Check firewall settings for port 8444
+- Verify the network ID matches (mainnet vs testnet)
+
+### Building Issues
+- Ensure OpenSSL development libraries are installed: `sudo apt-get install libssl-dev pkg-config`
+- Make sure you have a recent version of Rust (1.70+)
