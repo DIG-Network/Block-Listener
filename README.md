@@ -55,7 +55,7 @@ async function main() {
   const certs = loadChiaCerts('/home/user/.chia/mainnet');
 
   // Add one or more peers
-  listener.addPeer(
+  const peerId = listener.addPeer(
     '192.168.1.100',  // Peer IP address
     8444,             // Port (default: 8444)
     'mainnet',        // Network ID
@@ -64,15 +64,25 @@ async function main() {
     certs.ca          // CA certificate
   );
 
-  // Start listening for blocks
-  listener.start((block) => {
-    console.log('New block:', {
-      height: block.height,
-      weight: block.weight,
-      header_hash: block.header_hash,
-      timestamp: new Date(block.timestamp * 1000)
-    });
-  });
+  // Start listening for blocks and peer events
+  listener.start(
+    // Block callback
+    (block) => {
+      console.log('New block from peer', block.peerId, {
+        height: block.height,
+        weight: block.weight,
+        header_hash: block.header_hash,
+        timestamp: new Date(block.timestamp * 1000)
+      });
+    },
+    // Event callback
+    (event) => {
+      console.log('Peer event:', event.type, 'for peer', event.peerId);
+      if (event.type === 'error') {
+        console.error('Error:', event.message);
+      }
+    }
+  );
 
   // Stop when done
   // listener.stop();
@@ -104,18 +114,33 @@ Add a peer to connect to.
 - `tlsKey`: Buffer - The TLS private key
 - `caCert`: Buffer - The CA certificate
 
-##### `start(callback)`
+Returns: `number` - The peer ID assigned to this peer
+
+##### `disconnectPeer(peerId)`
+Disconnect a specific peer.
+
+- `peerId`: Number - The ID of the peer to disconnect
+
+Returns: `boolean` - true if the peer was found and disconnected, false otherwise
+
+##### `start(blockCallback, eventCallback)`
 Start listening for blocks from all added peers.
 
-- `callback`: Function - Called when a new block is received
+- `blockCallback`: Function - Called when a new block is received
+- `eventCallback`: Function - Called when peer events occur (connected, disconnected, error)
 
 ##### `stop()`
-Stop listening for blocks.
+Stop listening for blocks and disconnect all peers.
 
 ##### `isRunning()`
 Check if the listener is currently running.
 
 Returns: `boolean`
+
+##### `getConnectedPeers()`
+Get a list of currently connected peer IDs.
+
+Returns: `number[]` - Array of connected peer IDs
 
 ### Helper Functions
 
@@ -129,16 +154,33 @@ Returns: `{ cert: Buffer, key: Buffer, ca: Buffer }`
 #### `initTracing()`
 Initialize logging/tracing. Set the `RUST_LOG` environment variable to control log levels.
 
-## Block Event Data
+## Event Data
 
-When a new block is received, the callback receives an object with:
+### Block Event
+
+When a new block is received, the block callback receives an object with:
 
 ```typescript
 interface ChiaBlock {
+  peerId: number;        // ID of the peer that sent the block
   height: number;        // Block height
   weight: string;        // Chain weight (as string due to large numbers)
   header_hash: string;   // Block header hash (hex)
   timestamp: number;     // Block timestamp (seconds since epoch)
+}
+```
+
+### Peer Event
+
+When peer connection events occur, the event callback receives an object with:
+
+```typescript
+interface PeerEvent {
+  type: 'connected' | 'disconnected' | 'error';  // Event type
+  peerId: number;        // ID of the peer
+  host: string;          // Peer hostname/IP
+  port: number;          // Peer port
+  message?: string;      // Optional message (for errors or disconnect reasons)
 }
 ```
 
@@ -164,21 +206,28 @@ RUST_LOG=chia_block_listener=debug node example.js
 
 ## Examples
 
-Two example files are provided:
+Three example files are provided:
 
 ### `example.js`
 A simple example that:
 - Loads certificates from your Chia installation
 - Connects to a local Chia full node
-- Logs all received blocks
+- Logs all received blocks and peer events
 - Handles graceful shutdown
 
 ### `example-with-discovery.js`
 A more advanced example that:
 - Implements DNS-based peer discovery
 - Connects to multiple discovered peers
-- Tracks statistics about received blocks
-- Shows periodic status updates
+- Tracks statistics about received blocks per peer
+- Shows periodic status updates with peer connection info
+
+### `example-disconnect.js`
+Demonstrates peer management:
+- Connects to multiple peers
+- Shows how to disconnect specific peers
+- Tracks peer connection status
+- Displays connected peers periodically
 
 ### Peer Discovery Example
 

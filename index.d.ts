@@ -7,8 +7,10 @@ export declare function loadChiaCerts(chiaRoot: string): object
 export declare function initTracing(): void
 export declare class ChiaBlockListener {
   constructor()
-  addPeer(host: string, port: number, networkId: string, tlsCert: Buffer, tlsKey: Buffer, caCert: Buffer): void
-  start(callback: (...args: any[]) => any): void
+  addPeer(host: string, port: number, networkId: string, tlsCert: Buffer, tlsKey: Buffer, caCert: Buffer): number
+  disconnectPeer(peerId: number): boolean
+  start(blockCallback: (...args: any[]) => any, eventCallback: (...args: any[]) => any): void
   stop(): void
   isRunning(): boolean
+  getConnectedPeers(): Array<number>
 }

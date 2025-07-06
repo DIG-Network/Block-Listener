@@ -37,6 +37,14 @@ impl PeerConnection {
             ca_cert,
         }
     }
+    
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+    
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 
     pub async fn connect(&self) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, ChiaError> {
         info!("Connecting to peer at {}:{}", self.host, self.port);
