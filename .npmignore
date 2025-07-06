@@ -1,0 +1,13 @@
+target/
+Cargo.lock
+.cargo/
+archive/
+src/
+example/
+build.rs
+Cargo.toml
+*.db
+.git/
+.github/
+.gitignore
+rust-toolchain.toml
