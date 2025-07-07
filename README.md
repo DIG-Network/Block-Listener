@@ -312,3 +312,49 @@ Make sure your `CHIA_ROOT` points to a valid Chia installation with certificates
 ### Building Issues
 - Ensure OpenSSL development libraries are installed: `sudo apt-get install libssl-dev pkg-config`
 - Make sure you have a recent version of Rust (1.70+)
+
+### sync(peerId, startHeight?, blockCallback, eventCallback, syncStatusCallback)
+
+Synchronize the blockchain from a starting height to the current height, then switch to listening for new blocks.
+
+**Parameters:**
+- `peerId` (number): ID of the peer to sync from
+- `startHeight` (number, optional): Starting block height (defaults to 1)
+- `blockCallback` (function): Called for each block received
+- `eventCallback` (function): Called for peer events
+- `syncStatusCallback` (function): Called with sync progress updates
+
+**Sync Status Object:**
+- `phase` (string): Current phase - "historical" or "live"
+- `currentHeight` (number): Current block height being processed
+- `targetHeight` (number | null): Target height for historical sync
+- `blocksPerSecond` (number): Current sync speed
+
+**Example:**
+```javascript
+await listener.sync(
+    peerId,
+    1000000, // Start from block 1,000,000
+    (block) => {
+        console.log(`Block ${block.height}: ${block.header_hash}`);
+    },
+    (event) => {
+        console.log(`Event: ${event.type}`);
+    },
+    (status) => {
+        console.log(`Phase: ${status.phase}, Height: ${status.currentHeight}/${status.targetHeight || 'live'}`);
+    }
+);
+```
+
+## Examples
+
+- `example.js` - Basic connection and block listening
+- `example-with-discovery.js` - Automatic peer discovery
+- `example-disconnect.js` - Handling disconnections
+- `example-historical-blocks.js` - Fetching historical blocks
+- `example-sync.js` - Full blockchain synchronization with progress tracking
+
+## License
+
+MIT

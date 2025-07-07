@@ -41,6 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 once_cell = "1"
 sha2 = "0.10"
 dirs = "5"
+rand = "0.8"
 
 [build-dependencies]
 napi-build = "2"
