@@ -12,4 +12,6 @@ export declare class ChiaBlockListener {
   stop(): void
   isRunning(): boolean
   getConnectedPeers(): Array<number>
+  getBlockByHeight(peerId: number, height: number): object
+  getBlocksRange(peerId: number, startHeight: number, endHeight: number): Array<object>
 }

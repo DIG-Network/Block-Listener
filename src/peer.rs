@@ -1,7 +1,7 @@
 use crate::{error::ChiaError, tls};
 use chia_protocol::{
-    ProtocolMessageTypes, Handshake as ChiaHandshake, NewPeakWallet, FullBlock, 
-    RequestBlock, RespondBlock, NodeType
+    ProtocolMessageTypes, Handshake as ChiaHandshake, NewPeakWallet, FullBlock,
+    RequestBlock, RespondBlock, RejectBlock, NodeType
 };
 use chia_traits::Streamable;
 use futures_util::{SinkExt, StreamExt};
@@ -249,5 +249,119 @@ impl PeerConnection {
 
         info!("Connection closed");
         Ok(())
+    }
+
+    pub async fn request_block_by_height(
+        &self,
+        height: u64,
+        ws_stream: &mut WebSocket,
+    ) -> Result<FullBlock, ChiaError> {
+        info!("Requesting block at height {}", height);
+
+        let request = RequestBlock {
+            height: height as u32,
+            include_transaction_block: true,
+        };
+        
+        let request_bytes = request.to_bytes()
+            .map_err(|e| ChiaError::Serialization(e.to_string()))?;
+
+        let request_msg = chia_protocol::Message {
+            msg_type: ProtocolMessageTypes::RequestBlock,
+            id: Some(1), // Add request ID
+            data: request_bytes.into(),
+        };
+        
+        let request_bytes = request_msg.to_bytes()
+            .map_err(|e| ChiaError::Serialization(e.to_string()))?;
+
+        ws_stream
+            .send(WsMessage::Binary(request_bytes))
+            .await
+            .map_err(|e| ChiaError::WebSocket(e))?;
+
+        // Wait for the response, handling other messages in between
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 100; // Prevent infinite loops
+        
+        while attempts < MAX_ATTEMPTS {
+            attempts += 1;
+            
+            if let Some(msg) = ws_stream.next().await {
+                match msg {
+                    Ok(WsMessage::Binary(data)) => {
+                        match chia_protocol::Message::from_bytes(&data) {
+                            Ok(response) => {
+                                debug!("Received message type: {:?} while waiting for block", response.msg_type);
+                                
+                                match response.msg_type {
+                                    ProtocolMessageTypes::RespondBlock => {
+                                        match RespondBlock::from_bytes(&response.data) {
+                                            Ok(respond_block) => {
+                                                let block = respond_block.block;
+                                                info!("Received block at height {}", block.reward_chain_block.height);
+                                                return Ok(block);
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to parse RespondBlock: {}", e);
+                                                return Err(ChiaError::Protocol(e.to_string()));
+                                            }
+                                        }
+                                    }
+                                    ProtocolMessageTypes::RejectBlock => {
+                                        error!("Block request rejected by peer");
+                                        return Err(ChiaError::Protocol("Block request rejected".to_string()));
+                                    }
+                                    ProtocolMessageTypes::NewPeakWallet => {
+                                        // Just log and continue waiting for our response
+                                        if let Ok(new_peak) = NewPeakWallet::from_bytes(&response.data) {
+                                            debug!("Received NewPeakWallet at height {} while waiting for block", new_peak.height);
+                                        }
+                                        continue;
+                                    }
+                                    ProtocolMessageTypes::CoinStateUpdate => {
+                                        debug!("Received CoinStateUpdate while waiting for block");
+                                        continue;
+                                    }
+                                    _ => {
+                                        debug!("Received other message type while waiting for block: {:?}", response.msg_type);
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse message while waiting for block: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    Ok(WsMessage::Close(_)) => {
+                        error!("Peer closed connection during block request");
+                        return Err(ChiaError::Connection("Peer closed connection during block request".to_string()));
+                    }
+                    Ok(WsMessage::Ping(data)) => {
+                        // Respond to ping
+                        if let Err(e) = ws_stream.send(WsMessage::Pong(data)).await {
+                            error!("Failed to send pong: {}", e);
+                        }
+                        continue;
+                    }
+                    Ok(_) => {
+                        debug!("Unexpected WebSocket message type during block request");
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("WebSocket error: {}", e);
+                        return Err(ChiaError::WebSocket(e));
+                    }
+                }
+            } else {
+                error!("Connection closed during block request");
+                return Err(ChiaError::Connection("Connection closed during block request".to_string()));
+            }
+        }
+        
+        error!("Timeout waiting for block response after {} attempts", MAX_ATTEMPTS);
+        Err(ChiaError::Protocol("Timeout waiting for block response".to_string()))
     }
 }

@@ -1,8 +1,9 @@
 use crate::peer::PeerConnection;
+use crate::error::ChiaError;
 use napi::{
     bindgen_prelude::*,
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
-    JsFunction, Env,
+    JsFunction, Env, JsObject,
 };
 use napi_derive::napi;
 use std::sync::Arc;
@@ -142,7 +143,7 @@ impl ChiaBlockListener {
     }
 
     #[napi]
-    pub fn start(&self, env: Env, block_callback: JsFunction, event_callback: JsFunction) -> Result<()> {
+    pub fn start(&self, _env: Env, block_callback: JsFunction, event_callback: JsFunction) -> Result<()> {
         let rt = tokio::runtime::Handle::current();
         let inner = self.inner.clone();
         
@@ -490,5 +491,142 @@ impl ChiaBlockListener {
             let guard = inner.read().await;
             guard.peers.keys().cloned().collect()
         }))
+    }
+
+    #[napi]
+    pub fn get_block_by_height(&self, env: Env, peer_id: u32, height: u32) -> Result<JsObject> {
+        let rt = tokio::runtime::Handle::current();
+        let inner = self.inner.clone();
+        
+        let block_result = rt.block_on(async {
+            let guard = inner.read().await;
+            
+            if let Some(peer_info) = guard.peers.get(&peer_id) {
+                let peer = peer_info.connection.clone();
+                drop(guard); // Release the lock before connecting
+                
+                // Create a new connection for this request
+                match peer.connect().await {
+                    Ok(mut ws_stream) => {
+                        // Perform handshake
+                        if let Err(e) = peer.handshake(&mut ws_stream).await {
+                            return Err(ChiaError::Protocol(format!("Handshake failed: {}", e)));
+                        }
+                        
+                        // Request the block
+                        peer.request_block_by_height(height as u64, &mut ws_stream).await
+                    }
+                    Err(e) => Err(e)
+                }
+            } else {
+                Err(ChiaError::Connection(format!("Peer {} not found", peer_id)))
+            }
+        });
+        
+        match block_result {
+            Ok(block) => {
+                // Convert block to BlockData
+                let mut coin_additions = Vec::new();
+                let mut coin_removals = Vec::new();
+                
+                // Add farmer and pool reward coins if this is a transaction block
+                if block.foliage_transaction_block.is_some() {
+                    coin_additions.push(CoinRecord {
+                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
+                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
+                        amount: 250000000000,
+                    });
+                    
+                    coin_additions.push(CoinRecord {
+                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
+                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
+                        amount: 1750000000000,
+                    });
+                }
+                
+                // Add any reward claims from transactions
+                if let Some(tx_info) = &block.transactions_info {
+                    for claim in &tx_info.reward_claims_incorporated {
+                        coin_removals.push(CoinRecord {
+                            parent_coin_info: hex::encode(&claim.parent_coin_info),
+                            puzzle_hash: hex::encode(&claim.puzzle_hash),
+                            amount: claim.amount,
+                        });
+                    }
+                }
+                
+                let has_generator = block.transactions_generator.is_some();
+                let generator_size = block.transactions_generator.as_ref().map(|g| g.len() as u32);
+                
+                let block_data = BlockData {
+                    height: block.reward_chain_block.height,
+                    weight: block.reward_chain_block.weight.to_string(),
+                    header_hash: hex::encode(block.header_hash()),
+                    timestamp: block.foliage_transaction_block.as_ref().map(|f| f.timestamp as u32),
+                    coin_additions,
+                    coin_removals,
+                    has_transactions_generator: has_generator,
+                    generator_size,
+                };
+                
+                // Convert to JsObject
+                let env = unsafe { Env::from_raw(env.raw()) };
+                let mut obj = env.create_object()?;
+                
+                obj.set_named_property("height", env.create_uint32(block_data.height)?)?;
+                obj.set_named_property("weight", env.create_string(&block_data.weight)?)?;
+                obj.set_named_property("header_hash", env.create_string(&block_data.header_hash)?)?;
+                obj.set_named_property("timestamp", env.create_uint32(block_data.timestamp.unwrap_or(0))?)?;
+                
+                // Coin additions array
+                let mut additions_array = env.create_array_with_length(block_data.coin_additions.len())?;
+                for (i, coin) in block_data.coin_additions.iter().enumerate() {
+                    let mut coin_obj = env.create_object()?;
+                    coin_obj.set_named_property("parent_coin_info", env.create_string(&coin.parent_coin_info)?)?;
+                    coin_obj.set_named_property("puzzle_hash", env.create_string(&coin.puzzle_hash)?)?;
+                    coin_obj.set_named_property("amount", env.create_string(&coin.amount.to_string())?)?;
+                    additions_array.set_element(i as u32, coin_obj)?;
+                }
+                obj.set_named_property("coin_additions", additions_array)?;
+                
+                // Coin removals array
+                let mut removals_array = env.create_array_with_length(block_data.coin_removals.len())?;
+                for (i, coin) in block_data.coin_removals.iter().enumerate() {
+                    let mut coin_obj = env.create_object()?;
+                    coin_obj.set_named_property("parent_coin_info", env.create_string(&coin.parent_coin_info)?)?;
+                    coin_obj.set_named_property("puzzle_hash", env.create_string(&coin.puzzle_hash)?)?;
+                    coin_obj.set_named_property("amount", env.create_string(&coin.amount.to_string())?)?;
+                    removals_array.set_element(i as u32, coin_obj)?;
+                }
+                obj.set_named_property("coin_removals", removals_array)?;
+                
+                obj.set_named_property("has_transactions_generator", env.get_boolean(block_data.has_transactions_generator)?)?;
+                obj.set_named_property("generator_size", env.create_uint32(block_data.generator_size.unwrap_or(0))?)?;
+                
+                Ok(obj)
+            }
+            Err(e) => Err(Error::new(Status::GenericFailure, format!("Failed to get block: {}", e)))
+        }
+    }
+
+    #[napi]
+    pub fn get_blocks_range(&self, env: Env, peer_id: u32, start_height: u32, end_height: u32) -> Result<Vec<JsObject>> {
+        if start_height > end_height {
+            return Err(Error::new(Status::InvalidArg, "start_height must be <= end_height"));
+        }
+        
+        let mut blocks = Vec::new();
+        
+        for height in start_height..=end_height {
+            match self.get_block_by_height(env.clone(), peer_id, height) {
+                Ok(block) => blocks.push(block),
+                Err(e) => {
+                    // Log error but continue with other blocks
+                    error!("Failed to get block at height {}: {}", height, e);
+                }
+            }
+        }
+        
+        Ok(blocks)
     }
 }
