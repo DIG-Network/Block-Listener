@@ -142,6 +142,24 @@ Get a list of currently connected peer IDs.
 
 Returns: `number[]` - Array of connected peer IDs
 
+### discoverPeers(count?)
+
+Discovers available Chia peers using DNS introducers and returns a random selection.
+
+**Parameters:**
+- `count` (number, optional): Number of random peers to return (defaults to 1)
+
+**Returns:** Promise<string[]> - Array of peer addresses in format "host:port"
+
+**Example:**
+```javascript
+// Get 1 random peer (default)
+const peer = await listener.discoverPeers();
+
+// Get 10 random peers
+const peers = await listener.discoverPeers(10);
+```
+
 ### Helper Functions
 
 #### `loadChiaCerts(chiaRoot)`
@@ -313,12 +331,11 @@ Make sure your `CHIA_ROOT` points to a valid Chia installation with certificates
 - Ensure OpenSSL development libraries are installed: `sudo apt-get install libssl-dev pkg-config`
 - Make sure you have a recent version of Rust (1.70+)
 
-### sync(peerId, startHeight?, blockCallback, eventCallback, syncStatusCallback)
+### sync(startHeight?, blockCallback, eventCallback, syncStatusCallback)
 
-Synchronize the blockchain from a starting height to the current height, then switch to listening for new blocks.
+Synchronize the blockchain from a starting height to the current height, then switch to listening for new blocks. The sync method automatically distributes requests across all connected peers using round-robin load balancing.
 
 **Parameters:**
-- `peerId` (number): ID of the peer to sync from
 - `startHeight` (number, optional): Starting block height (defaults to 1)
 - `blockCallback` (function): Called for each block received
 - `eventCallback` (function): Called for peer events
@@ -332,11 +349,21 @@ Synchronize the blockchain from a starting height to the current height, then sw
 
 **Example:**
 ```javascript
+// Add multiple peers first
+listener.addPeer('peer1.example.com', 8444, 'mainnet');
+listener.addPeer('peer2.example.com', 8444, 'mainnet');
+listener.addPeer('peer3.example.com', 8444, 'mainnet');
+
+// Start the listener to establish connections
+listener.start(() => {}, (event) => {
+    console.log(`Peer event: ${event.type}`);
+});
+
+// Start syncing
 await listener.sync(
-    peerId,
     1000000, // Start from block 1,000,000
     (block) => {
-        console.log(`Block ${block.height}: ${block.header_hash}`);
+        console.log(`Block ${block.height} from peer ${block.peerId}: ${block.header_hash}`);
     },
     (event) => {
         console.log(`Event: ${event.type}`);

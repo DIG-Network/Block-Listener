@@ -14,6 +14,6 @@ export declare class ChiaBlockListener {
   getConnectedPeers(): Array<number>
   getBlockByHeight(peerId: number, height: number): object
   getBlocksRange(peerId: number, startHeight: number, endHeight: number): Array<object>
-  discoverPeers(): Promise<Array<string>>
-  sync(peerId: number, startHeight: number | undefined | null, blockCallback: (...args: any[]) => any, eventCallback: (...args: any[]) => any, syncStatusCallback: (...args: any[]) => any): void
+  discoverPeers(count?: number | undefined | null): Promise<Array<string>>
+  sync(startHeight: number | undefined | null, blockCallback: (...args: any[]) => any, eventCallback: (...args: any[]) => any, syncStatusCallback: (...args: any[]) => any): void
 }

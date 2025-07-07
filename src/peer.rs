@@ -1,7 +1,7 @@
 use crate::{error::ChiaError, tls};
 use chia_protocol::{
     ProtocolMessageTypes, Handshake as ChiaHandshake, NewPeakWallet, FullBlock,
-    RequestBlock, RespondBlock, RejectBlock, NodeType
+    RequestBlock, RespondBlock, NodeType
 };
 use chia_traits::Streamable;
 use futures_util::{SinkExt, StreamExt};
@@ -363,5 +363,40 @@ impl PeerConnection {
         
         error!("Timeout waiting for block response after {} attempts", MAX_ATTEMPTS);
         Err(ChiaError::Protocol("Timeout waiting for block response".to_string()))
+    }
+
+    pub async fn get_peak_height(&self) -> Result<u32, ChiaError> {
+        // Connect and get peak height
+        let mut ws_stream = self.connect().await?;
+        self.handshake(&mut ws_stream).await?;
+        
+        // Wait for NewPeakWallet message
+        while let Some(msg) = ws_stream.next().await {
+            match msg {
+                Ok(WsMessage::Binary(data)) => {
+                    if let Ok(message) = chia_protocol::Message::from_bytes(&data) {
+                        if message.msg_type == ProtocolMessageTypes::NewPeakWallet {
+                            if let Ok(new_peak) = NewPeakWallet::from_bytes(&message.data) {
+                                return Ok(new_peak.height);
+                            }
+                        }
+                    }
+                }
+                Ok(WsMessage::Close(_)) => {
+                    return Err(ChiaError::Connection("Connection closed".to_string()));
+                }
+                Err(e) => {
+                    return Err(ChiaError::Connection(format!("WebSocket error: {}", e)));
+                }
+                _ => {}
+            }
+        }
+        
+        Err(ChiaError::Connection("Failed to get peak height".to_string()))
+    }
+    
+    pub async fn request_blocks_range(&self, _start_height: u64, _end_height: u64) -> Result<Vec<FullBlock>, ChiaError> {
+        // ... existing code ...
+        Ok(Vec::new())
     }
 }

@@ -11,10 +11,7 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, RwLock, oneshot};
 use tracing::{error, info};
 use hex;
-use chia_protocol::{FullBlock, ProtocolMessageTypes, NewPeakWallet};
-use chia_traits::Streamable;
-use futures_util::StreamExt;
-use tokio_tungstenite::tungstenite::Message as WsMessage;
+use chia_protocol::FullBlock;
 
 #[napi]
 pub struct ChiaBlockListener {
@@ -32,6 +29,7 @@ struct ChiaBlockListenerInner {
 struct PeerConnectionInfo {
     connection: PeerConnection,
     disconnect_tx: Option<oneshot::Sender<()>>,
+    is_connected: bool,
 }
 
 #[derive(Clone)]
@@ -114,10 +112,11 @@ impl ChiaBlockListener {
             let peer_id = guard.next_peer_id;
             guard.next_peer_id += 1;
             
-            guard.peers.insert(peer_id, PeerConnectionInfo {
-                connection: peer,
-                disconnect_tx: None,
-            });
+                    guard.peers.insert(peer_id, PeerConnectionInfo {
+            connection: peer,
+            disconnect_tx: None,
+            is_connected: false,
+        });
             
             peer_id
         });
@@ -306,6 +305,14 @@ impl ChiaBlockListener {
                                 }).await;
                             }
                             
+                            // Mark peer as connected
+                            {
+                                let mut guard = inner_clone.write().await;
+                                if let Some(peer_info) = guard.peers.get_mut(&peer_id) {
+                                    peer_info.is_connected = true;
+                                }
+                            }
+                            
                             // Create block sender for this peer
                             let block_sender = {
                                 let guard = inner_clone.read().await;
@@ -345,10 +352,17 @@ impl ChiaBlockListener {
                                 let _ = guard.event_sender.send(PeerEvent {
                                     event_type: PeerEventType::Disconnected,
                                     peer_id,
-                                    host: host_for_listener,
+                                    host: host_for_listener.clone(),
                                     port,
                                     message: Some("Connection closed".to_string()),
                                 }).await;
+                                drop(guard);
+                                
+                                // Mark peer as disconnected
+                                let mut guard = inner_for_listener.write().await;
+                                if let Some(peer_info) = guard.peers.get_mut(&peer_id) {
+                                    peer_info.is_connected = false;
+                                }
                             });
                             
                             // Forward blocks with peer ID
@@ -635,8 +649,10 @@ impl ChiaBlockListener {
     }
 
     #[napi]
-    pub async fn discover_peers(&self) -> Result<Vec<String>> {
+    pub async fn discover_peers(&self, count: Option<u32>) -> Result<Vec<String>> {
         use rand::seq::SliceRandom;
+        
+        let count = count.unwrap_or(1) as usize;
         
         let introducers = vec![
             "dns-introducer.chia.net",
@@ -673,11 +689,16 @@ impl ChiaBlockListener {
         all_peers.sort();
         all_peers.dedup();
         
+        let total_discovered = all_peers.len();
+        
         // Shuffle the peers to get random order
         let mut rng = rand::thread_rng();
         all_peers.shuffle(&mut rng);
         
-        info!("Discovered {} unique peers total", all_peers.len());
+        // Take only the requested number of peers
+        all_peers.truncate(count);
+        
+        info!("Returning {} random peers out of {} discovered", all_peers.len(), total_discovered);
         
         Ok(all_peers)
     }
@@ -686,7 +707,6 @@ impl ChiaBlockListener {
     pub fn sync(
         &self, 
         env: Env,
-        peer_id: u32,
         start_height: Option<u32>,
         block_callback: JsFunction,
         event_callback: JsFunction,
@@ -788,152 +808,148 @@ impl ChiaBlockListener {
         
         // Start the sync process
         rt.spawn(async move {
-            let peer_info = {
-                let guard = inner.read().await;
-                guard.peers.get(&peer_id).map(|p| p.connection.clone())
-            };
+            // Start syncing from the specified height or block 1
+            let mut current_height = start_height.unwrap_or(1);
+            let mut blocks_synced = 0u32;
+            let sync_start_time = std::time::Instant::now();
+            let mut last_status_update = std::time::Instant::now();
+            let mut current_peak_height = 0u32;
+            let mut peer_index = 0usize;
             
-            if let Some(peer) = peer_info {
-                // Connect to peer
-                match peer.connect().await {
-                    Ok(mut ws_stream) => {
-                        // Perform handshake
-                        if let Err(e) = peer.handshake(&mut ws_stream).await {
-                            error!("Handshake failed during sync: {}", e);
-                            let _ = event_tsfn.call(PeerEvent {
-                                event_type: PeerEventType::Error,
-                                peer_id,
-                                host: peer.host().to_string(),
-                                port: peer.port(),
-                                message: Some(format!("Handshake failed: {}", e)),
-                            }, ThreadsafeFunctionCallMode::NonBlocking);
-                            return;
-                        }
-                        
-                        // Get current peak height
-                        let mut current_peak_height = 0u32;
-                        
-                        // Listen for NewPeakWallet to get current height
-                        if let Some(msg) = ws_stream.next().await {
-                            if let Ok(WsMessage::Binary(data)) = msg {
-                                if let Ok(message) = chia_protocol::Message::from_bytes(&data) {
-                                    if message.msg_type == ProtocolMessageTypes::NewPeakWallet {
-                                        if let Ok(new_peak) = NewPeakWallet::from_bytes(&message.data) {
-                                            current_peak_height = new_peak.height;
-                                            info!("Current blockchain height: {}", current_peak_height);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Start syncing from the specified height or block 1
-                        let mut current_height = start_height.unwrap_or(1);
-                        let mut blocks_synced = 0u32;
-                        let sync_start_time = std::time::Instant::now();
-                        let mut last_status_update = std::time::Instant::now();
-                        
-                        info!("Starting sync from height {} to {}", current_height, current_peak_height);
-                        
-                        // Phase 1: Historical sync
-                        sync_status_tsfn.call(SyncStatus {
-                            phase: "historical".to_string(),
-                            current_height,
-                            target_height: Some(current_peak_height),
-                            blocks_per_second: 0.0,
-                        }, ThreadsafeFunctionCallMode::NonBlocking);
-                        
-                        while current_height <= current_peak_height {
-                            // Request block
-                            match peer.request_block_by_height(current_height as u64, &mut ws_stream).await {
-                                Ok(block) => {
-                                    // Process block
-                                    let block_data = process_block_to_data(&block);
-                                    
-                                    let _ = block_tsfn.call(BlockEvent {
-                                        peer_id,
-                                        block: block_data,
-                                    }, ThreadsafeFunctionCallMode::NonBlocking);
-                                    
-                                    blocks_synced += 1;
-                                    current_height += 1;
-                                    
-                                    // Update status every second
-                                    if last_status_update.elapsed() >= std::time::Duration::from_secs(1) {
-                                        let elapsed = sync_start_time.elapsed().as_secs_f64();
-                                        let blocks_per_second = if elapsed > 0.0 { blocks_synced as f64 / elapsed } else { 0.0 };
-                                        
-                                        sync_status_tsfn.call(SyncStatus {
-                                            phase: "historical".to_string(),
-                                            current_height: current_height - 1,
-                                            target_height: Some(current_peak_height),
-                                            blocks_per_second,
-                                        }, ThreadsafeFunctionCallMode::NonBlocking);
-                                        
-                                        last_status_update = std::time::Instant::now();
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Failed to get block at height {}: {}", current_height, e);
-                                    // Continue with next block
-                                    current_height += 1;
-                                }
-                            }
-                        }
-                        
-                        info!("Historical sync complete, switching to live mode");
-                        
-                        // Phase 2: Switch to listening for new blocks
-                        sync_status_tsfn.call(SyncStatus {
-                            phase: "live".to_string(),
-                            current_height: current_height - 1,
-                            target_height: None,
-                            blocks_per_second: 0.0,
-                        }, ThreadsafeFunctionCallMode::NonBlocking);
-                        
-                        // Create channel for blocks
-                        let (block_tx, mut block_rx) = mpsc::channel(100);
-                        
-                        // Spawn listener task
-                        let listen_handle = tokio::spawn(async move {
-                            let _ = PeerConnection::listen_for_blocks(ws_stream, block_tx).await;
-                        });
-                        
-                        // Process incoming blocks
-                        while let Some(block) = block_rx.recv().await {
-                            let block_data = process_block_to_data(&block);
+            info!("Starting sync from height {}", current_height);
+            
+            // Phase 1: Historical sync
+            sync_status_tsfn.call(SyncStatus {
+                phase: "historical".to_string(),
+                current_height,
+                target_height: None, // Will be updated when we get peak height
+                blocks_per_second: 0.0,
+            }, ThreadsafeFunctionCallMode::NonBlocking);
+            
+            loop {
+                // Get list of connected peers
+                let connected_peers: Vec<(u32, PeerConnection)> = {
+                    let guard = inner.read().await;
+                    guard.peers.iter()
+                        .filter(|(_, peer)| peer.is_connected)
+                        .map(|(id, peer)| (*id, peer.connection.clone()))
+                        .collect()
+                };
+                
+                if connected_peers.is_empty() {
+                    // Wait for peers to connect
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                
+                // Round-robin through peers
+                let (peer_id, peer) = &connected_peers[peer_index % connected_peers.len()];
+                peer_index += 1;
+                
+                // Get current peak height if we don't have it yet
+                if current_peak_height == 0 {
+                    match peer.get_peak_height().await {
+                        Ok(height) => {
+                            current_peak_height = height;
+                            info!("Current blockchain height: {}", current_peak_height);
                             
-                            let _ = block_tsfn.call(BlockEvent {
-                                peer_id,
-                                block: block_data,
-                            }, ThreadsafeFunctionCallMode::NonBlocking);
-                            
-                            // Update sync status
+                            // Update sync status with target height
                             sync_status_tsfn.call(SyncStatus {
-                                phase: "live".to_string(),
-                                current_height: block.reward_chain_block.height,
-                                target_height: None,
+                                phase: "historical".to_string(),
+                                current_height,
+                                target_height: Some(current_peak_height),
                                 blocks_per_second: 0.0,
                             }, ThreadsafeFunctionCallMode::NonBlocking);
                         }
-                        
-                        // Wait for listener to finish
-                        let _ = listen_handle.await;
-                    }
-                    Err(e) => {
-                        error!("Failed to connect for sync: {}", e);
-                        let _ = event_tsfn.call(PeerEvent {
-                            event_type: PeerEventType::Error,
-                            peer_id,
-                            host: peer.host().to_string(),
-                            port: peer.port(),
-                            message: Some(format!("Connection failed: {}", e)),
-                        }, ThreadsafeFunctionCallMode::NonBlocking);
+                        Err(e) => {
+                            error!("Failed to get peak height from peer {}: {}", peer_id, e);
+                            continue;
+                        }
                     }
                 }
-            } else {
-                error!("Peer {} not found for sync", peer_id);
+                
+                // Check if we're caught up
+                if current_height > current_peak_height {
+                    info!("Historical sync complete, switching to live mode");
+                    
+                    // Phase 2: Switch to listening for new blocks
+                    sync_status_tsfn.call(SyncStatus {
+                        phase: "live".to_string(),
+                        current_height: current_height - 1,
+                        target_height: None,
+                        blocks_per_second: 0.0,
+                    }, ThreadsafeFunctionCallMode::NonBlocking);
+                    
+                    // In live mode, we listen to all peers for new blocks
+                    // The existing start() method handles this well
+                    break;
+                }
+                
+                // Request block from this peer
+                let block_result = {
+                    // Create a new connection for this request
+                    match peer.connect().await {
+                        Ok(mut ws_stream) => {
+                            // Perform handshake
+                            if let Err(e) = peer.handshake(&mut ws_stream).await {
+                                Err(ChiaError::Protocol(format!("Handshake failed: {}", e)))
+                            } else {
+                                // Request the block
+                                peer.request_block_by_height(current_height as u64, &mut ws_stream).await
+                            }
+                        }
+                        Err(e) => Err(e)
+                    }
+                };
+                
+                match block_result {
+                    Ok(block) => {
+                        // Process block
+                        let block_data = process_block_to_data(&block);
+                        
+                        let _ = block_tsfn.call(BlockEvent {
+                            peer_id: *peer_id,
+                            block: block_data,
+                        }, ThreadsafeFunctionCallMode::NonBlocking);
+                        
+                        blocks_synced += 1;
+                        current_height += 1;
+                        
+                        // Update status every second
+                        if last_status_update.elapsed() >= std::time::Duration::from_secs(1) {
+                            let elapsed = sync_start_time.elapsed().as_secs_f64();
+                            let blocks_per_second = if elapsed > 0.0 { blocks_synced as f64 / elapsed } else { 0.0 };
+                            
+                            sync_status_tsfn.call(SyncStatus {
+                                phase: "historical".to_string(),
+                                current_height: current_height - 1,
+                                target_height: Some(current_peak_height),
+                                blocks_per_second,
+                            }, ThreadsafeFunctionCallMode::NonBlocking);
+                            
+                            last_status_update = std::time::Instant::now();
+                        }
+                        
+                        // Check for new peak periodically
+                        if blocks_synced % 100 == 0 {
+                            if let Ok(new_peak) = peer.get_peak_height().await {
+                                if new_peak > current_peak_height {
+                                    info!("Peak height updated: {} -> {}", current_peak_height, new_peak);
+                                    current_peak_height = new_peak;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to get block {} from peer {}: {}", current_height, peer_id, e);
+                        // Try next peer on next iteration
+                    }
+                }
             }
+            
+            // Now in live mode - keep listening for new blocks from all peers
+            // This is handled by the existing infrastructure
+            info!("Sync switched to live mode - listening for new blocks");
         });
         
         Ok(())

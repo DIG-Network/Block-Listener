@@ -92,49 +92,61 @@ async function main() {
     // Create block listener
     const listener = new ChiaBlockListener();
     
-    // Discover peers
+    // Discover peers - get 10 random peers for better load distribution
     console.log('Discovering peers...');
-    const hosts = await listener.discoverPeers();
-    console.log(`Found ${hosts.length} peers`);
+    const hosts = await listener.discoverPeers(10);
+    console.log(`Got ${hosts.length} random peers`);
     
     if (hosts.length === 0) {
         console.log('No peers found!');
         process.exit(1);
     }
     
-    // Connect to first available peer
-    let connected = false;
-    let connectedPeerId = null;
+    // Add all discovered peers for better performance
+    console.log('Adding peers for sync...');
+    let addedPeers = 0;
     
-    for (const host of hosts.slice(0, 10)) { // Try first 10 peers
+    for (const host of hosts) { // Add all discovered peers
         const [hostname, port] = host.split(':');
-        console.log(`Trying to connect to ${hostname}:${port}...`);
+        console.log(`Adding peer: ${hostname}:${port}...`);
         
-        const peerId = listener.addPeer(hostname, parseInt(port), 'mainnet');
-        
-        // Wait a bit to see if connection succeeds
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Check if we got a connection event
-        if (peerId) {
-            connected = true;
-            connectedPeerId = peerId;
-            console.log(`Connected to peer ${peerId}`);
-            break;
+        try {
+            const peerId = listener.addPeer(hostname, parseInt(port), 'mainnet');
+            if (peerId) {
+                addedPeers++;
+                console.log(`Added peer ${peerId}`);
+            }
+        } catch (err) {
+            console.log(`Failed to add peer: ${err.message}`);
         }
     }
     
-    if (!connected) {
-        console.log('Failed to connect to any peer!');
+    if (addedPeers === 0) {
+        console.log('Failed to add any peers!');
         process.exit(1);
     }
+    
+    console.log(`\nAdded ${addedPeers} peers for sync`);
+    
+    // Start the listener to handle peer connections
+    listener.start(
+        () => {}, // Empty block callback for now
+        (event) => {
+            if (event.type === 'connected') {
+                console.log(`Peer ${event.peerId} connected`);
+            }
+        }
+    );
+    
+    // Wait a bit for peers to connect
+    console.log('Waiting for peers to connect...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Start sync
     console.log('\nStarting blockchain sync...\n');
     
     try {
         await listener.sync(
-            connectedPeerId,
             startHeight,
             // Block callback
             (block) => {
