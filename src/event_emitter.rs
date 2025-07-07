@@ -1,15 +1,15 @@
 use crate::peer::PeerConnection;
-use chia_protocol::FullBlock;
 use napi::{
     bindgen_prelude::*,
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
-    JsFunction, Env, JsObject,
+    JsFunction, Env,
 };
 use napi_derive::napi;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, RwLock, oneshot};
-use tracing::{error, info, warn};
+use tracing::{error, info};
+use hex;
 
 #[napi]
 pub struct ChiaBlockListener {
@@ -57,6 +57,17 @@ struct BlockData {
     weight: String,
     header_hash: String,
     timestamp: Option<u32>,
+    coin_additions: Vec<CoinRecord>,
+    coin_removals: Vec<CoinRecord>,
+    has_transactions_generator: bool,
+    generator_size: Option<u32>,
+}
+
+#[derive(Clone)]
+struct CoinRecord {
+    parent_coin_info: String,
+    puzzle_hash: String,
+    amount: u64,
 }
 
 #[napi]
@@ -83,17 +94,11 @@ impl ChiaBlockListener {
         host: String,
         port: u16,
         network_id: String,
-        tls_cert: Buffer,
-        tls_key: Buffer,
-        ca_cert: Buffer,
     ) -> Result<u32> {
         let peer = PeerConnection::new(
             host.clone(),
             port,
             network_id,
-            tls_cert.to_vec(),
-            tls_key.to_vec(),
-            ca_cert.to_vec(),
         );
         
         let rt = tokio::runtime::Handle::current();
@@ -151,7 +156,7 @@ impl ChiaBlockListener {
         }
 
         // Create threadsafe functions for callbacks
-        let block_tsfn: ThreadsafeFunction<BlockEvent, ErrorStrategy::CalleeHandled> = block_callback
+        let block_tsfn: ThreadsafeFunction<BlockEvent, ErrorStrategy::Fatal> = block_callback
             .create_threadsafe_function(0, |ctx| {
                 let event: &BlockEvent = &ctx.value;
                 let mut obj = ctx.env.create_object()?;
@@ -162,10 +167,35 @@ impl ChiaBlockListener {
                 obj.set_named_property("header_hash", ctx.env.create_string(&event.block.header_hash)?)?;
                 obj.set_named_property("timestamp", ctx.env.create_uint32(event.block.timestamp.unwrap_or(0))?)?;
                 
+                // Coin additions array
+                let mut additions_array = ctx.env.create_array_with_length(event.block.coin_additions.len())?;
+                for (i, coin) in event.block.coin_additions.iter().enumerate() {
+                    let mut coin_obj = ctx.env.create_object()?;
+                    coin_obj.set_named_property("parent_coin_info", ctx.env.create_string(&coin.parent_coin_info)?)?;
+                    coin_obj.set_named_property("puzzle_hash", ctx.env.create_string(&coin.puzzle_hash)?)?;
+                    coin_obj.set_named_property("amount", ctx.env.create_string(&coin.amount.to_string())?)?;
+                    additions_array.set_element(i as u32, coin_obj)?;
+                }
+                obj.set_named_property("coin_additions", additions_array)?;
+                
+                // Coin removals array
+                let mut removals_array = ctx.env.create_array_with_length(event.block.coin_removals.len())?;
+                for (i, coin) in event.block.coin_removals.iter().enumerate() {
+                    let mut coin_obj = ctx.env.create_object()?;
+                    coin_obj.set_named_property("parent_coin_info", ctx.env.create_string(&coin.parent_coin_info)?)?;
+                    coin_obj.set_named_property("puzzle_hash", ctx.env.create_string(&coin.puzzle_hash)?)?;
+                    coin_obj.set_named_property("amount", ctx.env.create_string(&coin.amount.to_string())?)?;
+                    removals_array.set_element(i as u32, coin_obj)?;
+                }
+                obj.set_named_property("coin_removals", removals_array)?;
+                
+                obj.set_named_property("has_transactions_generator", ctx.env.get_boolean(event.block.has_transactions_generator)?)?;
+                obj.set_named_property("generator_size", ctx.env.create_uint32(event.block.generator_size.unwrap_or(0))?)?;
+                
                 Ok(vec![obj])
             })?;
 
-        let event_tsfn: ThreadsafeFunction<PeerEvent, ErrorStrategy::CalleeHandled> = event_callback
+        let event_tsfn: ThreadsafeFunction<PeerEvent, ErrorStrategy::Fatal> = event_callback
             .create_threadsafe_function(0, |ctx| {
                 let event: &PeerEvent = &ctx.value;
                 let mut obj = ctx.env.create_object()?;
@@ -208,7 +238,7 @@ impl ChiaBlockListener {
             let block_tsfn_clone = block_tsfn.clone();
             tokio::spawn(async move {
                 while let Some(event) = block_rx.recv().await {
-                    block_tsfn_clone.call(Ok(event), ThreadsafeFunctionCallMode::NonBlocking);
+                    block_tsfn_clone.call(event, ThreadsafeFunctionCallMode::NonBlocking);
                 }
             });
             
@@ -216,7 +246,7 @@ impl ChiaBlockListener {
             let event_tsfn_clone = event_tsfn.clone();
             tokio::spawn(async move {
                 while let Some(event) = event_rx.recv().await {
-                    event_tsfn_clone.call(Ok(event), ThreadsafeFunctionCallMode::NonBlocking);
+                    event_tsfn_clone.call(event, ThreadsafeFunctionCallMode::NonBlocking);
                 }
             });
             
@@ -242,18 +272,6 @@ impl ChiaBlockListener {
                     let host = peer.host().to_string();
                     let port = peer.port();
                     
-                    // Send connected event
-                    {
-                        let guard = inner_clone.read().await;
-                        let _ = guard.event_sender.send(PeerEvent {
-                            event_type: PeerEventType::Connected,
-                            peer_id,
-                            host: host.clone(),
-                            port,
-                            message: None,
-                        }).await;
-                    }
-                    
                     match peer.connect().await {
                         Ok(mut ws_stream) => {
                             info!("Connected to peer {} (ID: {})", host, peer_id);
@@ -269,6 +287,18 @@ impl ChiaBlockListener {
                                     message: Some(format!("Handshake failed: {}", e)),
                                 }).await;
                                 return;
+                            }
+                            
+                            // Send connected event after successful handshake
+                            {
+                                let guard = inner_clone.read().await;
+                                let _ = guard.event_sender.send(PeerEvent {
+                                    event_type: PeerEventType::Connected,
+                                    peer_id,
+                                    host: host.clone(),
+                                    port,
+                                    message: None,
+                                }).await;
                             }
                             
                             // Create block sender for this peer
@@ -318,11 +348,77 @@ impl ChiaBlockListener {
                             
                             // Forward blocks with peer ID
                             while let Some(block) = block_rx.recv().await {
+                                // Extract coin additions
+                                let mut coin_additions = Vec::new();
+                                let mut coin_removals = Vec::new();
+                                
+                                // Add farmer and pool reward coins if this is a transaction block
+                                if block.foliage_transaction_block.is_some() {
+                                    // Farmer reward coin (0.25 XCH)
+                                    coin_additions.push(CoinRecord {
+                                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
+                                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
+                                        amount: 250000000000,
+                                    });
+                                    
+                                    // Pool reward coin (1.75 XCH)
+                                    coin_additions.push(CoinRecord {
+                                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
+                                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
+                                        amount: 1750000000000,
+                                    });
+                                }
+                                
+                                // Add any reward claims from transactions
+                                if let Some(tx_info) = &block.transactions_info {
+                                    // Reward claims are coins being spent (removed)
+                                    for claim in &tx_info.reward_claims_incorporated {
+                                        coin_removals.push(CoinRecord {
+                                            parent_coin_info: hex::encode(&claim.parent_coin_info),
+                                            puzzle_hash: hex::encode(&claim.puzzle_hash),
+                                            amount: claim.amount,
+                                        });
+                                    }
+                                }
+                                
+                                // Check for transactions generator
+                                let has_generator = block.transactions_generator.is_some();
+                                let generator_size = block.transactions_generator.as_ref().map(|g| g.len() as u32);
+                                
+                                // Log coin additions and removals
+                                info!("Block {} has {} coin additions and {} coin removals", 
+                                    block.reward_chain_block.height, coin_additions.len(), coin_removals.len());
+                                
+                                if !coin_additions.is_empty() {
+                                    info!("Coin additions:");
+                                    for (i, coin) in coin_additions.iter().enumerate() {
+                                        info!("  Addition {}: puzzle_hash={}, amount={} mojos", 
+                                            i + 1, &coin.puzzle_hash, coin.amount);
+                                    }
+                                }
+                                
+                                if !coin_removals.is_empty() {
+                                    info!("Coin removals (reward claims):");
+                                    for (i, coin) in coin_removals.iter().enumerate() {
+                                        info!("  Removal {}: puzzle_hash={}, amount={} mojos", 
+                                            i + 1, &coin.puzzle_hash, coin.amount);
+                                    }
+                                }
+                                
+                                if has_generator {
+                                    info!("Block has transactions generator ({} bytes) - additional coin spends would need CLVM execution", 
+                                        generator_size.unwrap_or(0));
+                                }
+                                
                                 let block_data = BlockData {
                                     height: block.reward_chain_block.height,
                                     weight: block.reward_chain_block.weight.to_string(),
                                     header_hash: hex::encode(block.header_hash()),
                                     timestamp: block.foliage_transaction_block.as_ref().map(|f| f.timestamp as u32),
+                                    coin_additions,
+                                    coin_removals,
+                                    has_transactions_generator: has_generator,
+                                    generator_size,
                                 };
                                 
                                 let _ = block_sender.send(BlockEvent {
@@ -395,28 +491,4 @@ impl ChiaBlockListener {
             guard.peers.keys().cloned().collect()
         }))
     }
-}
-
-// Helper function to load certificates from files
-#[napi]
-pub fn load_chia_certs(env: Env, chia_root: String) -> Result<JsObject> {
-    use std::fs;
-    
-    let cert_path = format!("{}/config/ssl/full_node/private_full_node.crt", chia_root);
-    let key_path = format!("{}/config/ssl/full_node/private_full_node.key", chia_root);
-    let ca_path = format!("{}/config/ssl/ca/chia_ca.crt", chia_root);
-    
-    let cert = fs::read(&cert_path)
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to read cert: {}", e)))?;
-    let key = fs::read(&key_path)
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to read key: {}", e)))?;
-    let ca = fs::read(&ca_path)
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to read CA: {}", e)))?;
-    
-    let mut obj = env.create_object()?;
-    obj.set_named_property("cert", env.create_buffer_with_data(cert)?.into_raw())?;
-    obj.set_named_property("key", env.create_buffer_with_data(key)?.into_raw())?;
-    obj.set_named_property("ca", env.create_buffer_with_data(ca)?.into_raw())?;
-    
-    Ok(obj)
 }

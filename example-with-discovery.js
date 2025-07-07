@@ -1,6 +1,4 @@
-const { ChiaBlockListener, loadChiaCerts, initTracing } = require('./index.js');
-const os = require('os');
-const path = require('path');
+const { ChiaBlockListener, initTracing } = require('./index.js');
 const dns = require('dns').promises;
 
 /**
@@ -48,11 +46,6 @@ async function main() {
   const listener = new ChiaBlockListener();
 
   try {
-    // Load certificates from Chia installation
-    const chiaRoot = process.env.CHIA_ROOT || path.join(os.homedir(), '.chia', 'mainnet');
-    console.log('Loading certificates from:', chiaRoot);
-    const certs = loadChiaCerts(chiaRoot);
-
     // Discover peers
     console.log('Discovering peers...');
     const peers = await discoverPeers();
@@ -66,15 +59,18 @@ async function main() {
     
     for (const peer of selectedPeers) {
       console.log(`Adding peer: ${peer.host}:${peer.port} (from ${peer.source})`);
-      const peerId = listener.addPeer(
-        peer.host,
-        peer.port,
-        'mainnet',
-        certs.cert,
-        certs.key,
-        certs.ca
-      );
-      peerMap.set(peerId, peer);
+      try {
+        const peerId = listener.addPeer(
+          peer.host,
+          peer.port,
+          'mainnet'
+        );
+        if (peerId) {
+          peerMap.set(peerId, peer);
+        }
+      } catch (err) {
+        console.error(`Failed to add peer ${peer.host}:${peer.port}:`, err.message);
+      }
     }
 
     console.log('Starting block listener...');
@@ -86,49 +82,101 @@ async function main() {
     let connectedPeers = new Set();
     
     // Start listening for blocks and peer events
-    listener.start(
-      // Block callback
-      (block) => {
-        blockCount++;
-        const now = Date.now();
-        const timeSinceLastBlock = (now - lastBlockTime) / 1000;
-        lastBlockTime = now;
-        
-        // Track blocks per peer
-        blocksByPeer.set(block.peerId, (blocksByPeer.get(block.peerId) || 0) + 1);
-        const peerInfo = peerMap.get(block.peerId);
-        
-        console.log(`\n🔗 Block #${blockCount} received!`);
-        console.log('From peer:', block.peerId, peerInfo ? `(${peerInfo.host} via ${peerInfo.source})` : '');
-        console.log('Height:', block.height);
-        console.log('Weight:', block.weight);
-        console.log('Header Hash:', block.header_hash);
-        console.log('Timestamp:', new Date(block.timestamp * 1000).toISOString());
-        console.log('Time since last block:', timeSinceLastBlock.toFixed(1), 'seconds');
-        console.log('---');
-      },
-      // Event callback
-      (event) => {
-        const peerInfo = peerMap.get(event.peerId);
-        const peerDesc = `${event.peerId} (${event.host}:${event.port}${peerInfo ? ` via ${peerInfo.source}` : ''})`;
-        
-        switch (event.type) {
-          case 'connected':
-            console.log(`\n✅ Peer ${peerDesc} connected`);
-            connectedPeers.add(event.peerId);
-            break;
-          case 'disconnected':
-            console.log(`\n❌ Peer ${peerDesc} disconnected`);
-            if (event.message) console.log(`   Reason: ${event.message}`);
-            connectedPeers.delete(event.peerId);
-            break;
-          case 'error':
-            console.log(`\n⚠️  Peer ${peerDesc} error`);
-            if (event.message) console.log(`   Error: ${event.message}`);
-            break;
+    try {
+      const result = listener.start(
+        // Block callback
+        (block) => {
+          if (!block) {
+            console.error('Received null block');
+            return;
+          }
+          
+          blockCount++;
+          const now = Date.now();
+          const timeSinceLastBlock = lastBlockTime ? ((now - lastBlockTime) / 1000).toFixed(1) : 0;
+          lastBlockTime = now;
+          
+          // Track blocks per peer
+          blocksByPeer.set(block.peerId, (blocksByPeer.get(block.peerId) || 0) + 1);
+          const peerInfo = peerMap.get(block.peerId);
+          const peerInfoStr = peerInfo ? `${peerInfo.host}:${peerInfo.port} via ${peerInfo.source}` : 'Unknown peer';
+          
+          // Display block info with coin data
+          console.log(`
+================================================================================
+🎯 BLOCK #${blockCount} - Height: ${block.height}
+================================================================================
+
+📍 IDENTIFICATION:
+  Height: ${block.height}
+  Header Hash: ${block.header_hash}
+  From Peer: ${block.peerId} (${peerInfoStr})
+
+⏱️  TIMING & METRICS:
+  Timestamp: ${block.timestamp > 0 ? new Date(block.timestamp * 1000).toISOString() : 'N/A'}
+  Time Since Last Block: ${timeSinceLastBlock} seconds
+  Weight: ${block.weight}
+
+💰 COIN ADDITIONS (${block.coin_additions ? block.coin_additions.length : 0}):
+${block.coin_additions && block.coin_additions.length > 0 ?
+  block.coin_additions.map((coin, i) => `  ${i + 1}. Coin Addition:
+     Parent Coin Info: ${coin.parent_coin_info}
+     Puzzle Hash: ${coin.puzzle_hash}
+     Amount: ${coin.amount} mojos (${coin.amount / 1e12} XCH)`).join('\n') :
+  '  None'}
+
+💸 COIN REMOVALS (${block.coin_removals ? block.coin_removals.length : 0}):
+${block.coin_removals && block.coin_removals.length > 0 ?
+  block.coin_removals.map((coin, i) => `  ${i + 1}. Coin Removal:
+     Parent Coin Info: ${coin.parent_coin_info}
+     Puzzle Hash: ${coin.puzzle_hash}
+     Amount: ${coin.amount} mojos (${coin.amount / 1e12} XCH)`).join('\n') :
+  '  None (requires CLVM execution to calculate)'}
+
+📊 TRANSACTION INFO:
+  Has Transactions Generator: ${block.has_transactions_generator !== undefined ? block.has_transactions_generator : 'N/A'}
+  Generator Size: ${block.generator_size !== undefined ? block.generator_size + ' bytes' : 'N/A'}
+
+================================================================================
+`);
+        },
+        // Event callback
+        (event) => {
+          if (!event) {
+            console.error('Received null event');
+            return;
+          }
+          
+          const peerInfo = peerMap.get(event.peerId);
+          const peerDesc = peerInfo 
+            ? `${event.peerId} (${event.host}:${event.port} via ${peerInfo.source})`
+            : `${event.peerId} (${event.host || 'unknown'}:${event.port || 'unknown'})`;
+          
+          switch (event.type) {
+            case 'connected':
+              console.log(`\n✅ Peer ${peerDesc} connected`);
+              connectedPeers.add(event.peerId);
+              break;
+            case 'disconnected':
+              console.log(`\n❌ Peer ${peerDesc} disconnected`);
+              if (event.message) console.log(`   Reason: ${event.message}`);
+              connectedPeers.delete(event.peerId);
+              break;
+            case 'error':
+              console.log(`\n⚠️  Peer ${peerDesc} error`);
+              if (event.message) console.log(`   Error: ${event.message}`);
+              break;
+            default:
+              console.log(`\n❓ Unknown event type: ${event.type}`);
+          }
         }
-      }
-    );
+      );
+      
+      console.log('listener.start() returned:', result);
+    } catch (err) {
+      console.error('Error starting listener:', err);
+      throw err;
+    }
 
     console.log('Listening for blocks... Press Ctrl+C to stop\n');
 

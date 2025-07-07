@@ -21,6 +21,7 @@ futures-util = "0.3"
 chia-protocol = "0.26"
 chia-traits = "0.26"
 chia-bls = "0.26"
+chia-ssl = "0.26"
 clvmr = "0.8"
 
 # Networking
@@ -39,6 +40,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 once_cell = "1"
 sha2 = "0.10"
+dirs = "5"
 
 [build-dependencies]
 napi-build = "2"
