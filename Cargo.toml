@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    ".",
+    ".", "crates/block-indexer",
     "crates/chia-listener-core",
 ]
 resolver = "2"
@@ -16,6 +16,8 @@ crate-type = ["cdylib"]
 [dependencies]
 # Core functionality from our reusable crate
 chia-listener-core = { path = "crates/chia-listener-core" }
+block-indexer = { path = "crates/block-indexer" }
+database-connector = { path = "crates/database-connector" }
 
 # NAPI-rs for Node.js bindings
 napi = { version = "2", features = ["napi9", "tokio_rt", "async"] }
@@ -33,6 +35,7 @@ hex = "0.4"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [build-dependencies]
 napi-build = "2"

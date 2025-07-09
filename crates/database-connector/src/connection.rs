@@ -1,8 +1,7 @@
 //! Database connection implementations
 
 use async_trait::async_trait;
-use sqlx::{Pool, Sqlite, Postgres, Row as SqlxRow};
-use std::sync::Arc;
+use sqlx::{Pool, Sqlite, Postgres, Row as SqlxRow, Column};
 use std::time::Duration;
 
 use crate::{
@@ -32,7 +31,7 @@ impl DatabaseConnection {
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(config.max_connections)
                     .min_connections(config.min_connections)
-                    .connect_timeout(Duration::from_secs(config.connection_timeout_seconds))
+                    .acquire_timeout(Duration::from_secs(config.connection_timeout_seconds))
                     .idle_timeout(Duration::from_secs(config.idle_timeout_seconds))
                     .connect(&url)
                     .await?;
@@ -43,7 +42,7 @@ impl DatabaseConnection {
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(config.max_connections)
                     .min_connections(config.min_connections)
-                    .connect_timeout(Duration::from_secs(config.connection_timeout_seconds))
+                    .acquire_timeout(Duration::from_secs(config.connection_timeout_seconds))
                     .idle_timeout(Duration::from_secs(config.idle_timeout_seconds))
                     .connect(&url)
                     .await?;
@@ -371,7 +370,6 @@ fn bind_param_postgres<'q>(
 // Helper functions for row conversion
 fn sqlite_row_to_json(row: &sqlx::sqlite::SqliteRow, index: usize) -> Result<serde_json::Value> {
     use sqlx::TypeInfo;
-    use sqlx::sqlite::SqliteTypeInfo;
     
     let type_info = row.column(index).type_info();
     let type_name = type_info.name();
@@ -405,7 +403,6 @@ fn sqlite_row_to_json(row: &sqlx::sqlite::SqliteRow, index: usize) -> Result<ser
 
 fn postgres_row_to_json(row: &sqlx::postgres::PgRow, index: usize) -> Result<serde_json::Value> {
     use sqlx::TypeInfo;
-    use sqlx::postgres::PgTypeInfo;
     
     let type_info = row.column(index).type_info();
     let type_name = type_info.name();
