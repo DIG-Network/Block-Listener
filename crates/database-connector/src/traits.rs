@@ -1,8 +1,6 @@
 //! Traits for database operations
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use sqlx::{Row, FromRow};
 
 /// Main trait for database operations
 #[async_trait]
@@ -25,7 +23,7 @@ pub trait DatabaseOperations: Send + Sync {
 
 /// Transaction trait
 #[async_trait]
-pub trait Transaction: Send + Sync {
+pub trait Transaction: Send {
     /// Commit the transaction
     async fn commit(self: Box<Self>) -> crate::Result<()>;
     
