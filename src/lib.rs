@@ -2,13 +2,9 @@
 
 use napi_derive::napi;
 
-mod peer;
-mod protocol;
+mod error_conversion;
 mod event_emitter;
-mod error;
-mod tls;
 
-pub use error::ChiaError;
 pub use event_emitter::ChiaBlockListener;
 
 #[napi]

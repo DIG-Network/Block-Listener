@@ -23,9 +23,3 @@ pub enum ChiaError {
     #[error("Other error: {0}")]
     Other(String),
 }
-
-impl From<ChiaError> for napi::Error {
-    fn from(err: ChiaError) -> Self {
-        napi::Error::new(napi::Status::GenericFailure, err.to_string())
-    }
-}

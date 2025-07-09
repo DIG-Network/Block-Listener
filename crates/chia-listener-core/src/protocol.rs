@@ -6,6 +6,13 @@ use chia_protocol::{Bytes32, ProtocolMessageTypes};
 pub const MAINNET_GENESIS_CHALLENGE: &str = "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
 pub const TESTNET11_GENESIS_CHALLENGE: &str = "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615";
 
+pub const DNS_INTRODUCERS: &[&str] = &[
+    "dns-introducer.chia.net:8444",
+    "chia.ctrlaltdel.ch:8444",
+    "seeder.dexie.space:8444",
+    "chia.hoffmang.com:8444",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Handshake {
     pub network_id: String,
