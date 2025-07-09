@@ -310,7 +310,8 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { ChiaBlockListener, initTracing } = nativeBinding
+const { ChiaBlockListener, BlockIndexerNapi, initTracing } = nativeBinding
 
 module.exports.ChiaBlockListener = ChiaBlockListener
+module.exports.BlockIndexerNapi = BlockIndexerNapi
 module.exports.initTracing = initTracing
