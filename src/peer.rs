@@ -15,6 +15,105 @@ use tracing::{debug, error, info, warn};
 
 type WebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+// Add PeerSession to manage persistent connections
+pub struct PeerSession {
+    peer: PeerConnection,
+    ws_stream: Option<WebSocket>,
+    last_request_time: std::time::Instant,
+}
+
+impl PeerSession {
+    pub fn new(peer: PeerConnection) -> Self {
+        Self {
+            peer,
+            ws_stream: None,
+            last_request_time: std::time::Instant::now() - std::time::Duration::from_secs(1), // Allow immediate first request
+        }
+    }
+    
+    pub async fn ensure_connected(&mut self) -> Result<&mut WebSocket, ChiaError> {
+        if self.ws_stream.is_none() {
+            info!("Creating new connection to {}:{}", self.peer.host, self.peer.port);
+            let mut ws_stream = self.peer.connect().await?;
+            self.peer.handshake(&mut ws_stream).await?;
+            self.ws_stream = Some(ws_stream);
+        }
+        
+        Ok(self.ws_stream.as_mut().unwrap())
+    }
+    
+    pub async fn request_block_by_height(&mut self, height: u64) -> Result<FullBlock, ChiaError> {
+        // Enforce rate limiting - wait if necessary
+        let elapsed = self.last_request_time.elapsed();
+        let min_interval = std::time::Duration::from_millis(200);
+        if elapsed < min_interval {
+            let wait_time = min_interval - elapsed;
+            tokio::time::sleep(wait_time).await;
+        }
+        
+        // Update last request time
+        self.last_request_time = std::time::Instant::now();
+        
+        // Ensure we're connected first
+        self.ensure_connected().await?;
+        
+        // Try to request the block using the existing connection
+        let result = {
+            let ws_stream = self.ws_stream.as_mut().unwrap();
+            self.peer.request_block_by_height(height, ws_stream).await
+        };
+        
+        match result {
+            Ok(block) => Ok(block),
+            Err(e) => {
+                // If the request failed, try reconnecting once
+                warn!("Block request failed, attempting to reconnect: {}", e);
+                self.ws_stream = None;
+                self.ensure_connected().await?;
+                let ws_stream = self.ws_stream.as_mut().unwrap();
+                self.peer.request_block_by_height(height, ws_stream).await
+            }
+        }
+    }
+    
+    pub async fn get_peak_height(&mut self) -> Result<u32, ChiaError> {
+        let ws_stream = self.ensure_connected().await?;
+        
+        // Send request for sync status or wait for NewPeakWallet
+        // For now, just wait for the first NewPeakWallet message
+        // In a real implementation, we might want to send a specific request
+        
+        while let Some(msg) = ws_stream.next().await {
+            match msg {
+                Ok(WsMessage::Binary(data)) => {
+                    if let Ok(message) = chia_protocol::Message::from_bytes(&data) {
+                        if message.msg_type == ProtocolMessageTypes::NewPeakWallet {
+                            if let Ok(new_peak) = NewPeakWallet::from_bytes(&message.data) {
+                                return Ok(new_peak.height);
+                            }
+                        }
+                    }
+                }
+                Ok(WsMessage::Close(_)) => {
+                    self.ws_stream = None;
+                    return Err(ChiaError::Connection("Connection closed".to_string()));
+                }
+                Err(e) => {
+                    self.ws_stream = None;
+                    return Err(ChiaError::Connection(format!("WebSocket error: {}", e)));
+                }
+                _ => {}
+            }
+        }
+        
+        Err(ChiaError::Connection("Failed to get peak height".to_string()))
+    }
+    
+    pub fn close(&mut self) {
+        self.ws_stream = None;
+    }
+}
+
 #[derive(Clone)]
 pub struct PeerConnection {
     host: String,
