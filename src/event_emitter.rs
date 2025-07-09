@@ -1,6 +1,11 @@
-use crate::peer::PeerConnection;
-use crate::peer::PeerSession;
-use crate::error::ChiaError;
+use chia_listener_core::{
+    PeerConnection, 
+    ChiaError,
+    BlockData, 
+    CoinRecord, 
+    process_block_to_data,
+};
+
 use napi::{
     bindgen_prelude::*,
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
@@ -55,25 +60,6 @@ enum PeerEventType {
     Error,
 }
 
-#[derive(Clone)]
-struct BlockData {
-    height: u32,
-    weight: String,
-    header_hash: String,
-    timestamp: Option<u32>,
-    coin_additions: Vec<CoinRecord>,
-    coin_removals: Vec<CoinRecord>,
-    has_transactions_generator: bool,
-    generator_size: Option<u32>,
-}
-
-#[derive(Clone)]
-struct CoinRecord {
-    parent_coin_info: String,
-    puzzle_hash: String,
-    amount: u64,
-}
-
 #[napi]
 impl ChiaBlockListener {
     #[napi(constructor)]
@@ -113,11 +99,11 @@ impl ChiaBlockListener {
             let peer_id = guard.next_peer_id;
             guard.next_peer_id += 1;
             
-                    guard.peers.insert(peer_id, PeerConnectionInfo {
-            connection: peer,
-            disconnect_tx: None,
-            is_connected: false,
-        });
+            guard.peers.insert(peer_id, PeerConnectionInfo {
+                connection: peer,
+                disconnect_tx: None,
+                is_connected: false,
+            });
             
             peer_id
         });
@@ -368,78 +354,32 @@ impl ChiaBlockListener {
                             
                             // Forward blocks with peer ID
                             while let Some(block) = block_rx.recv().await {
-                                // Extract coin additions
-                                let mut coin_additions = Vec::new();
-                                let mut coin_removals = Vec::new();
-                                
-                                // Add farmer and pool reward coins if this is a transaction block
-                                if block.foliage_transaction_block.is_some() {
-                                    // Farmer reward coin (0.25 XCH)
-                                    coin_additions.push(CoinRecord {
-                                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
-                                        amount: 250000000000,
-                                    });
-                                    
-                                    // Pool reward coin (1.75 XCH)
-                                    coin_additions.push(CoinRecord {
-                                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
-                                        amount: 1750000000000,
-                                    });
-                                }
-                                
-                                // Add any reward claims from transactions
-                                if let Some(tx_info) = &block.transactions_info {
-                                    // Reward claims are coins being spent (removed)
-                                    for claim in &tx_info.reward_claims_incorporated {
-                                        coin_removals.push(CoinRecord {
-                                            parent_coin_info: hex::encode(&claim.parent_coin_info),
-                                            puzzle_hash: hex::encode(&claim.puzzle_hash),
-                                            amount: claim.amount,
-                                        });
-                                    }
-                                }
-                                
-                                // Check for transactions generator
-                                let has_generator = block.transactions_generator.is_some();
-                                let generator_size = block.transactions_generator.as_ref().map(|g| g.len() as u32);
+                                let block_data = process_block_to_data(&block);
                                 
                                 // Log coin additions and removals
                                 info!("Block {} has {} coin additions and {} coin removals", 
-                                    block.reward_chain_block.height, coin_additions.len(), coin_removals.len());
+                                    block_data.height, block_data.coin_additions.len(), block_data.coin_removals.len());
                                 
-                                if !coin_additions.is_empty() {
+                                if !block_data.coin_additions.is_empty() {
                                     info!("Coin additions:");
-                                    for (i, coin) in coin_additions.iter().enumerate() {
+                                    for (i, coin) in block_data.coin_additions.iter().enumerate() {
                                         info!("  Addition {}: puzzle_hash={}, amount={} mojos", 
                                             i + 1, &coin.puzzle_hash, coin.amount);
                                     }
                                 }
                                 
-                                if !coin_removals.is_empty() {
+                                if !block_data.coin_removals.is_empty() {
                                     info!("Coin removals (reward claims):");
-                                    for (i, coin) in coin_removals.iter().enumerate() {
+                                    for (i, coin) in block_data.coin_removals.iter().enumerate() {
                                         info!("  Removal {}: puzzle_hash={}, amount={} mojos", 
                                             i + 1, &coin.puzzle_hash, coin.amount);
                                     }
                                 }
                                 
-                                if has_generator {
+                                if block_data.has_transactions_generator {
                                     info!("Block has transactions generator ({} bytes) - additional coin spends would need CLVM execution", 
-                                        generator_size.unwrap_or(0));
+                                        block_data.generator_size.unwrap_or(0));
                                 }
-                                
-                                let block_data = BlockData {
-                                    height: block.reward_chain_block.height,
-                                    weight: block.reward_chain_block.weight.to_string(),
-                                    header_hash: hex::encode(block.header_hash()),
-                                    timestamp: block.foliage_transaction_block.as_ref().map(|f| f.timestamp as u32),
-                                    coin_additions,
-                                    coin_removals,
-                                    has_transactions_generator: has_generator,
-                                    generator_size,
-                                };
                                 
                                 let _ = block_sender.send(BlockEvent {
                                     peer_id,
@@ -508,7 +448,10 @@ impl ChiaBlockListener {
         
         Ok(rt.block_on(async {
             let guard = inner.read().await;
-            guard.peers.keys().cloned().collect()
+            guard.peers.iter()
+                .filter(|(_, info)| info.is_connected)
+                .map(|(id, _)| *id)
+                .collect()
         }))
     }
 
@@ -517,195 +460,142 @@ impl ChiaBlockListener {
         let rt = tokio::runtime::Handle::current();
         let inner = self.inner.clone();
         
-        let block_result = rt.block_on(async {
+        let promise = env.create_promise()?;
+        let (deferred, promise_obj) = promise;
+        
+        rt.spawn(async move {
             let guard = inner.read().await;
-            
-            if let Some(peer_info) = guard.peers.get(&peer_id) {
-                let peer = peer_info.connection.clone();
-                drop(guard); // Release the lock before connecting
-                
-                // Create a new connection for this request
-                match peer.connect().await {
-                    Ok(mut ws_stream) => {
-                        // Perform handshake
-                        if let Err(e) = peer.handshake(&mut ws_stream).await {
-                            return Err(ChiaError::Protocol(format!("Handshake failed: {}", e)));
+            let result = if let Some(peer_info) = guard.peers.get(&peer_id) {
+                if !peer_info.is_connected {
+                    Err(anyhow::anyhow!("Peer {} is not connected", peer_id))
+                } else {
+                    match peer_info.connection.get_block_by_height(height).await {
+                        Ok(block) => {
+                            let block_data = process_block_to_data(&block);
+                            Ok(serde_json::to_value(block_data)?)
                         }
-                        
-                        // Request the block
-                        peer.request_block_by_height(height as u64, &mut ws_stream).await
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e)
                 }
             } else {
-                Err(ChiaError::Connection(format!("Peer {} not found", peer_id)))
+                Err(anyhow::anyhow!("Peer {} not found", peer_id))
+            };
+            
+            drop(guard);
+            
+            match result {
+                Ok(block_value) => {
+                    deferred.resolve(move |env| {
+                        let mut obj = env.create_object()?;
+                        
+                        if let serde_json::Value::Object(map) = block_value {
+                            for (key, value) in map {
+                                match value {
+                                    serde_json::Value::Number(n) => {
+                                        if let Some(i) = n.as_u64() {
+                                            obj.set_named_property(&key, env.create_uint32(i as u32)?)?;
+                                        } else if let Some(i) = n.as_i64() {
+                                            obj.set_named_property(&key, env.create_int32(i as i32)?)?;
+                                        }
+                                    }
+                                    serde_json::Value::String(s) => {
+                                        obj.set_named_property(&key, env.create_string(&s)?)?;
+                                    }
+                                    serde_json::Value::Bool(b) => {
+                                        obj.set_named_property(&key, env.get_boolean(b)?)?;
+                                    }
+                                    serde_json::Value::Null => {
+                                        obj.set_named_property(&key, env.get_null()?)?;
+                                    }
+                                    serde_json::Value::Array(arr) => {
+                                        let mut js_arr = env.create_array_with_length(arr.len())?;
+                                        for (i, item) in arr.iter().enumerate() {
+                                            if let serde_json::Value::Object(coin_map) = item {
+                                                let mut coin_obj = env.create_object()?;
+                                                for (coin_key, coin_value) in coin_map {
+                                                    match coin_value {
+                                                        serde_json::Value::String(s) => {
+                                                            coin_obj.set_named_property(coin_key, env.create_string(s)?)?;
+                                                        }
+                                                        serde_json::Value::Number(n) => {
+                                                            if let Some(amount) = n.as_u64() {
+                                                                coin_obj.set_named_property(coin_key, env.create_string(&amount.to_string())?)?;
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                js_arr.set_element(i as u32, coin_obj)?;
+                                            }
+                                        }
+                                        obj.set_named_property(&key, js_arr)?;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        
+                        Ok(obj)
+                    });
+                }
+                Err(e) => {
+                    deferred.reject(Error::new(Status::GenericFailure, e.to_string()));
+                }
             }
         });
         
-        match block_result {
-            Ok(block) => {
-                // Convert block to BlockData
-                let mut coin_additions = Vec::new();
-                let mut coin_removals = Vec::new();
-                
-                // Add farmer and pool reward coins if this is a transaction block
-                if block.foliage_transaction_block.is_some() {
-                    coin_additions.push(CoinRecord {
-                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
-                        amount: 250000000000,
-                    });
-                    
-                    coin_additions.push(CoinRecord {
-                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
-                        amount: 1750000000000,
-                    });
-                }
-                
-                // Add any reward claims from transactions
-                if let Some(tx_info) = &block.transactions_info {
-                    for claim in &tx_info.reward_claims_incorporated {
-                        coin_removals.push(CoinRecord {
-                            parent_coin_info: hex::encode(&claim.parent_coin_info),
-                            puzzle_hash: hex::encode(&claim.puzzle_hash),
-                            amount: claim.amount,
-                        });
-                    }
-                }
-                
-                let has_generator = block.transactions_generator.is_some();
-                let generator_size = block.transactions_generator.as_ref().map(|g| g.len() as u32);
-                
-                let block_data = BlockData {
-                    height: block.reward_chain_block.height,
-                    weight: block.reward_chain_block.weight.to_string(),
-                    header_hash: hex::encode(block.header_hash()),
-                    timestamp: block.foliage_transaction_block.as_ref().map(|f| f.timestamp as u32),
-                    coin_additions,
-                    coin_removals,
-                    has_transactions_generator: has_generator,
-                    generator_size,
-                };
-                
-                // Convert to JsObject
-                let env = unsafe { Env::from_raw(env.raw()) };
-                let mut obj = env.create_object()?;
-                
-                obj.set_named_property("height", env.create_uint32(block_data.height)?)?;
-                obj.set_named_property("weight", env.create_string(&block_data.weight)?)?;
-                obj.set_named_property("header_hash", env.create_string(&block_data.header_hash)?)?;
-                obj.set_named_property("timestamp", env.create_uint32(block_data.timestamp.unwrap_or(0))?)?;
-                
-                // Coin additions array
-                let mut additions_array = env.create_array_with_length(block_data.coin_additions.len())?;
-                for (i, coin) in block_data.coin_additions.iter().enumerate() {
-                    let mut coin_obj = env.create_object()?;
-                    coin_obj.set_named_property("parent_coin_info", env.create_string(&coin.parent_coin_info)?)?;
-                    coin_obj.set_named_property("puzzle_hash", env.create_string(&coin.puzzle_hash)?)?;
-                    coin_obj.set_named_property("amount", env.create_string(&coin.amount.to_string())?)?;
-                    additions_array.set_element(i as u32, coin_obj)?;
-                }
-                obj.set_named_property("coin_additions", additions_array)?;
-                
-                // Coin removals array
-                let mut removals_array = env.create_array_with_length(block_data.coin_removals.len())?;
-                for (i, coin) in block_data.coin_removals.iter().enumerate() {
-                    let mut coin_obj = env.create_object()?;
-                    coin_obj.set_named_property("parent_coin_info", env.create_string(&coin.parent_coin_info)?)?;
-                    coin_obj.set_named_property("puzzle_hash", env.create_string(&coin.puzzle_hash)?)?;
-                    coin_obj.set_named_property("amount", env.create_string(&coin.amount.to_string())?)?;
-                    removals_array.set_element(i as u32, coin_obj)?;
-                }
-                obj.set_named_property("coin_removals", removals_array)?;
-                
-                obj.set_named_property("has_transactions_generator", env.get_boolean(block_data.has_transactions_generator)?)?;
-                obj.set_named_property("generator_size", env.create_uint32(block_data.generator_size.unwrap_or(0))?)?;
-                
-                Ok(obj)
-            }
-            Err(e) => Err(Error::new(Status::GenericFailure, format!("Failed to get block: {}", e)))
-        }
+        Ok(promise_obj)
     }
 
     #[napi]
     pub fn get_blocks_range(&self, env: Env, peer_id: u32, start_height: u32, end_height: u32) -> Result<Vec<JsObject>> {
-        if start_height > end_height {
-            return Err(Error::new(Status::InvalidArg, "start_height must be <= end_height"));
-        }
-        
-        let mut blocks = Vec::new();
-        
-        for height in start_height..=end_height {
-            match self.get_block_by_height(env.clone(), peer_id, height) {
-                Ok(block) => blocks.push(block),
-                Err(e) => {
-                    // Log error but continue with other blocks
-                    error!("Failed to get block at height {}: {}", height, e);
-                }
-            }
-        }
-        
-        Ok(blocks)
+        // TODO: Implement this method to get a range of blocks
+        // This would need to be added to the core crate's PeerConnection
+        Err(Error::new(Status::GenericFailure, "Not implemented yet"))
     }
 
     #[napi]
     pub async fn discover_peers(&self, count: Option<u32>) -> Result<Vec<String>> {
         Self::discover_peers_static(count).await.map_err(|e| Error::new(Status::GenericFailure, e))
     }
-    
+
     async fn discover_peers_static(count: Option<u32>) -> Result<Vec<String>, String> {
+        use chia_listener_core::protocol::DNS_INTRODUCERS;
         use rand::seq::SliceRandom;
+        use std::net::ToSocketAddrs;
         
-        let count = count.unwrap_or(1) as usize;
+        let count = count.unwrap_or(5) as usize;
+        let mut discovered_peers = Vec::new();
+        let mut rng = rand::thread_rng();
         
-        let introducers = vec![
-            "dns-introducer.chia.net",
-            "chia.ctrlaltdel.ch", 
-            "seeder.dexie.space",
-            "chia.hoffmang.com"
-        ];
+        // Shuffle DNS introducers
+        let mut shuffled_introducers = DNS_INTRODUCERS.to_vec();
+        shuffled_introducers.shuffle(&mut rng);
         
-        let mut all_peers = Vec::new();
-        
-        for introducer in introducers {
-            match tokio::net::lookup_host(format!("{}:8444", introducer)).await {
+        for introducer in shuffled_introducers {
+            match tokio::net::lookup_host(introducer).await {
                 Ok(addrs) => {
-                    let mut peers: Vec<String> = addrs
-                        .filter_map(|addr| {
-                            if let std::net::SocketAddr::V4(v4) = addr {
-                                Some(format!("{}:8444", v4.ip()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
+                    let resolved_addrs: Vec<_> = addrs.collect();
+                    info!("Resolved {} to {} addresses", introducer, resolved_addrs.len());
                     
-                    info!("Found {} peers from {}", peers.len(), introducer);
-                    all_peers.append(&mut peers);
+                    for addr in resolved_addrs {
+                        discovered_peers.push(addr.ip().to_string());
+                        if discovered_peers.len() >= count {
+                            return Ok(discovered_peers);
+                        }
+                    }
                 }
                 Err(e) => {
-                    error!("Failed to resolve {}: {}", introducer, e);
+                    warn!("Failed to resolve {}: {}", introducer, e);
                 }
             }
         }
         
-        // Remove duplicates
-        all_peers.sort();
-        all_peers.dedup();
-        
-        let total_discovered = all_peers.len();
-        
-        // Shuffle the peers to get random order
-        let mut rng = rand::thread_rng();
-        all_peers.shuffle(&mut rng);
-        
-        // Take only the requested number of peers
-        all_peers.truncate(count);
-        
-        info!("Returning {} random peers out of {} discovered", all_peers.len(), total_discovered);
-        
-        Ok(all_peers)
+        if discovered_peers.is_empty() {
+            Err("Failed to discover any peers".to_string())
+        } else {
+            Ok(discovered_peers)
+        }
     }
 
     #[napi]
@@ -720,6 +610,15 @@ impl ChiaBlockListener {
         let rt = tokio::runtime::Handle::current();
         let inner = self.inner.clone();
         
+        let is_running = rt.block_on(async {
+            let guard = inner.read().await;
+            guard.is_running
+        });
+        
+        if is_running {
+            return Err(Error::new(Status::GenericFailure, "Already running"));
+        }
+
         // Create threadsafe functions for callbacks
         let block_tsfn: ThreadsafeFunction<BlockEvent, ErrorStrategy::Fatal> = block_callback
             .create_threadsafe_function(0, |ctx| {
@@ -782,8 +681,7 @@ impl ChiaBlockListener {
                 
                 Ok(vec![obj])
             })?;
-            
-        // Sync status callback
+
         #[derive(Clone)]
         struct SyncStatus {
             phase: String,
@@ -791,10 +689,10 @@ impl ChiaBlockListener {
             target_height: Option<u32>,
             blocks_per_second: f64,
         }
-        
+
         let sync_status_tsfn: ThreadsafeFunction<SyncStatus, ErrorStrategy::Fatal> = sync_status_callback
             .create_threadsafe_function(0, |ctx| {
-                let status: &SyncStatus = &ctx.value;
+                let status = &ctx.value;
                 let mut obj = ctx.env.create_object()?;
                 
                 obj.set_named_property("phase", ctx.env.create_string(&status.phase)?)?;
@@ -810,275 +708,150 @@ impl ChiaBlockListener {
                 
                 Ok(vec![obj])
             })?;
-        
-        // Start the sync process
+
+        // Start sync process
+        let inner_clone = self.inner.clone();
         rt.spawn(async move {
-            // Start syncing from the specified height or block 1
-            let start_height_value = start_height.unwrap_or(1);
-            let mut blocks_synced = 0u32;
-            let sync_start_time = std::time::Instant::now();
-            let mut last_status_update = std::time::Instant::now();
-            let mut current_peak_height = 0u32;
-            let mut peer_index = 0usize;
+            // Mark as running
+            {
+                let mut guard = inner_clone.write().await;
+                guard.is_running = true;
+            }
+
+            // Initialize channels
+            let (block_tx, mut block_rx) = mpsc::channel(100);
+            let (event_tx, _event_rx) = mpsc::channel(100);
             
-            info!("Starting sync from height {}", start_height_value);
-            
-            // Phase 1: Historical sync
+            {
+                let mut guard = inner_clone.write().await;
+                guard.block_sender = block_tx.clone();
+                guard.event_sender = event_tx.clone();
+            }
+
+            // Spawn block event handler
+            let block_tsfn_clone = block_tsfn.clone();
+            let inner_for_blocks = inner_clone.clone();
+            tokio::spawn(async move {
+                while let Some(event) = block_rx.recv().await {
+                    block_tsfn_clone.call(event, ThreadsafeFunctionCallMode::NonBlocking);
+                }
+                
+                // When channel closes, mark as not running
+                let mut guard = inner_for_blocks.write().await;
+                guard.is_running = false;
+            });
+
+            // Get connected peers
+            let peers = {
+                let guard = inner_clone.read().await;
+                guard.peers.iter()
+                    .filter(|(_, info)| info.is_connected)
+                    .map(|(id, info)| (*id, info.connection.clone()))
+                    .collect::<Vec<_>>()
+            };
+
+            if peers.is_empty() {
+                error!("No connected peers available for sync");
+                let _ = event_tx.send(PeerEvent {
+                    event_type: PeerEventType::Error,
+                    peer_id: 0,
+                    host: "".to_string(),
+                    port: 0,
+                    message: Some("No connected peers available for sync".to_string()),
+                }).await;
+                return;
+            }
+
+            // Use the first connected peer for sync
+            let (peer_id, peer) = &peers[0];
+            info!("Starting sync with peer ID {}", peer_id);
+
+            // Send sync starting status
             sync_status_tsfn.call(SyncStatus {
-                phase: "historical".to_string(),
-                current_height: start_height_value,
-                target_height: None, // Will be updated when we get peak height
+                phase: "starting".to_string(),
+                current_height: 0,
+                target_height: None,
                 blocks_per_second: 0.0,
             }, ThreadsafeFunctionCallMode::NonBlocking);
-            
-            // Create persistent sessions for each peer
-            let mut peer_sessions: HashMap<u32, PeerSession> = HashMap::new();
-            let mut peer_failure_counts: HashMap<u32, u32> = HashMap::new();
-            const MIN_PEERS: usize = 3;
-            const MAX_FAILURES: u32 = 3;
-            
-            // Buffer for out-of-order blocks
-            let mut block_buffer: HashMap<u32, (FullBlock, u32)> = HashMap::new(); // height -> (block, peer_id)
-            let mut next_height_to_process = start_height_value;
-            let mut highest_requested_height = start_height_value.saturating_sub(1);
-            const MAX_CONCURRENT_REQUESTS: u32 = 10; // Limit concurrent requests
-            
-            loop {
-                // Get list of connected peers
-                let mut connected_peers: Vec<(u32, PeerConnection)> = {
-                    let guard = inner.read().await;
-                    guard.peers.iter()
-                        .filter(|(id, peer)| {
-                            peer.is_connected && 
-                            peer_failure_counts.get(id).unwrap_or(&0) < &MAX_FAILURES
-                        })
-                        .map(|(id, peer)| (*id, peer.connection.clone()))
-                        .collect()
-                };
-                
-                // If we have too few peers, discover and add more
-                if connected_peers.len() < MIN_PEERS {
-                    info!("Only {} active peers, discovering more...", connected_peers.len());
-                    
-                    // Discover new peers
-                    if let Ok(new_peer_addresses) = ChiaBlockListener::discover_peers_static(Some(5)).await {
-                        for peer_address in new_peer_addresses.iter().take(MIN_PEERS - connected_peers.len()) {
-                            let parts: Vec<&str> = peer_address.split(':').collect();
-                            if parts.len() == 2 {
-                                let host = parts[0].to_string();
-                                let port = parts[1].parse::<u16>().unwrap_or(8444);
-                                
-                                // Add the peer
-                                let mut guard = inner.write().await;
-                                let peer_id = guard.next_peer_id;
-                                guard.next_peer_id += 1;
-                                
-                                let peer = PeerConnection::new(host.clone(), port, "mainnet".to_string());
-                                guard.peers.insert(peer_id, PeerConnectionInfo {
-                                    connection: peer.clone(),
-                                    disconnect_tx: None,
-                                    is_connected: true, // Mark as connected for sync purposes
-                                });
-                                
-                                connected_peers.push((peer_id, peer));
-                                info!("Added new peer {} with ID {} for sync", host, peer_id);
-                            }
-                        }
-                    }
+
+            // Get current peak height
+            let peak_height = match peer.get_peak_height().await {
+                Ok(height) => height,
+                Err(e) => {
+                    error!("Failed to get peak height: {}", e);
+                    let _ = event_tx.send(PeerEvent {
+                        event_type: PeerEventType::Error,
+                        peer_id: *peer_id,
+                        host: peer.host().to_string(),
+                        port: peer.port(),
+                        message: Some(format!("Failed to get peak height: {}", e)),
+                    }).await;
+                    return;
                 }
-                
-                if connected_peers.is_empty() {
-                    // Still no peers, wait and retry
-                    warn!("No available peers for sync, waiting...");
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                    continue;
-                }
-                
-                // Round-robin through peers
-                let (peer_id, peer) = &connected_peers[peer_index % connected_peers.len()];
-                peer_index += 1;
-                
-                // Get or create session for this peer
-                let session = peer_sessions.entry(*peer_id).or_insert_with(|| {
-                    PeerSession::new(peer.clone())
-                });
-                
-                // Get current peak height if we don't have it yet
-                if current_peak_height == 0 {
-                    match session.get_peak_height().await {
-                        Ok(height) => {
-                            current_peak_height = height;
-                            info!("Current blockchain height: {}", current_peak_height);
+            };
+
+            let start_height = start_height.unwrap_or(0);
+            info!("Syncing from height {} to {}", start_height, peak_height);
+
+            // Send sync status update
+            sync_status_tsfn.call(SyncStatus {
+                phase: "syncing".to_string(),
+                current_height: start_height,
+                target_height: Some(peak_height),
+                blocks_per_second: 0.0,
+            }, ThreadsafeFunctionCallMode::NonBlocking);
+
+            let start_time = std::time::Instant::now();
+            let mut blocks_processed = 0;
+
+            // Sync blocks
+            for height in start_height..=peak_height {
+                match peer.get_block_by_height(height).await {
+                    Ok(block) => {
+                        let block_data = process_block_to_data(&block);
+                        
+                        let _ = block_tx.send(BlockEvent {
+                            peer_id: *peer_id,
+                            block: block_data,
+                        }).await;
+                        
+                        blocks_processed += 1;
+                        
+                        // Update sync status every 100 blocks
+                        if blocks_processed % 100 == 0 {
+                            let elapsed = start_time.elapsed().as_secs_f64();
+                            let blocks_per_second = blocks_processed as f64 / elapsed;
                             
-                            // Update sync status with target height
                             sync_status_tsfn.call(SyncStatus {
-                                phase: "historical".to_string(),
-                                current_height: next_height_to_process,
-                                target_height: Some(current_peak_height),
-                                blocks_per_second: 0.0,
+                                phase: "syncing".to_string(),
+                                current_height: height,
+                                target_height: Some(peak_height),
+                                blocks_per_second,
                             }, ThreadsafeFunctionCallMode::NonBlocking);
                         }
-                        Err(e) => {
-                            error!("Failed to get peak height from peer {}: {}", peer_id, e);
-                            // Remove failed session and increment failure count
-                            peer_sessions.remove(peer_id);
-                            *peer_failure_counts.entry(*peer_id).or_insert(0) += 1;
-                            continue;
-                        }
                     }
-                }
-                
-                // Check if we're caught up
-                if next_height_to_process > current_peak_height && block_buffer.is_empty() {
-                    info!("Historical sync complete, switching to live mode");
-                    
-                    // Close all sessions
-                    for (_, mut session) in peer_sessions {
-                        session.close();
-                    }
-                    
-                    // Phase 2: Switch to listening for new blocks
-                    sync_status_tsfn.call(SyncStatus {
-                        phase: "live".to_string(),
-                        current_height: next_height_to_process.saturating_sub(1),
-                        target_height: None,
-                        blocks_per_second: 0.0,
-                    }, ThreadsafeFunctionCallMode::NonBlocking);
-                    
-                    // In live mode, we listen to all peers for new blocks
-                    // The existing start() method handles this well
-                    break;
-                }
-                
-                // Only request new blocks if we haven't exceeded concurrent request limit
-                if highest_requested_height < current_peak_height && 
-                   highest_requested_height.saturating_sub(next_height_to_process) < MAX_CONCURRENT_REQUESTS {
-                    
-                    highest_requested_height += 1;
-                    let request_height = highest_requested_height;
-                    
-                    // Request block from this peer using persistent session
-                    let block_result = session.request_block_by_height(request_height as u64).await;
-                    
-                    match block_result {
-                        Ok(block) => {
-                            let block_height = block.reward_chain_block.height;
-                            info!("Received block {} from peer {}", block_height, peer_id);
-                            
-                            // Store block in buffer
-                            block_buffer.insert(block_height, (block, *peer_id));
-                        }
-                        Err(e) => {
-                            error!("Failed to get block {} from peer {}: {}", request_height, peer_id, e);
-                            // Remove failed session and increment failure count
-                            peer_sessions.remove(peer_id);
-                            *peer_failure_counts.entry(*peer_id).or_insert(0) += 1;
-                            
-                            // If this peer has failed too many times, log it
-                            if peer_failure_counts[peer_id] >= MAX_FAILURES {
-                                warn!("Peer {} has failed {} times, will be excluded from sync", peer_id, MAX_FAILURES);
-                            }
-                            
-                            // We need to re-request this height
-                            highest_requested_height = request_height.saturating_sub(1);
-                        }
-                    }
-                }
-                
-                // Process blocks in order from the buffer
-                while let Some((block, block_peer_id)) = block_buffer.remove(&next_height_to_process) {
-                    // Process block
-                    let block_data = process_block_to_data(&block);
-                    
-                    let _ = block_tsfn.call(BlockEvent {
-                        peer_id: block_peer_id,
-                        block: block_data,
-                    }, ThreadsafeFunctionCallMode::NonBlocking);
-                    
-                    blocks_synced += 1;
-                    next_height_to_process += 1;
-                    
-                    // Update status every second
-                    if last_status_update.elapsed() >= std::time::Duration::from_secs(1) {
-                        let elapsed = sync_start_time.elapsed().as_secs_f64();
-                        let blocks_per_second = if elapsed > 0.0 { blocks_synced as f64 / elapsed } else { 0.0 };
-                        
-                        sync_status_tsfn.call(SyncStatus {
-                            phase: "historical".to_string(),
-                            current_height: next_height_to_process.saturating_sub(1),
-                            target_height: Some(current_peak_height),
-                            blocks_per_second,
-                        }, ThreadsafeFunctionCallMode::NonBlocking);
-                        
-                        last_status_update = std::time::Instant::now();
-                    }
-                    
-                    // Check for new peak periodically
-                    if blocks_synced % 100 == 0 {
-                        // Create a temporary session to check peak height
-                        let mut temp_session = PeerSession::new(peer.clone());
-                        if let Ok(new_peak) = temp_session.get_peak_height().await {
-                            if new_peak > current_peak_height {
-                                info!("Peak height updated: {} -> {}", current_peak_height, new_peak);
-                                current_peak_height = new_peak;
-                            }
-                        }
-                        temp_session.close();
+                    Err(e) => {
+                        warn!("Failed to get block at height {}: {}", height, e);
+                        // Continue with next block
                     }
                 }
             }
-            
-            // Now in live mode - keep listening for new blocks from all peers
-            // This is handled by the existing infrastructure
-            info!("Sync switched to live mode - listening for new blocks");
-        });
-        
-        Ok(())
-    }
-}
 
-// Helper function to process block into BlockData
-fn process_block_to_data(block: &FullBlock) -> BlockData {
-    let mut coin_additions = Vec::new();
-    let mut coin_removals = Vec::new();
-    
-    // Add farmer and pool reward coins if this is a transaction block
-    if block.foliage_transaction_block.is_some() {
-        coin_additions.push(CoinRecord {
-            parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-            puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
-            amount: 250000000000,
+            // Send sync completed status
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let blocks_per_second = blocks_processed as f64 / elapsed;
+            
+            sync_status_tsfn.call(SyncStatus {
+                phase: "completed".to_string(),
+                current_height: peak_height,
+                target_height: Some(peak_height),
+                blocks_per_second,
+            }, ThreadsafeFunctionCallMode::NonBlocking);
+
+            info!("Sync completed. Processed {} blocks in {:.2} seconds ({:.2} blocks/sec)", 
+                blocks_processed, elapsed, blocks_per_second);
         });
-        
-        coin_additions.push(CoinRecord {
-            parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-            puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
-            amount: 1750000000000,
-        });
-    }
-    
-    // Add any reward claims from transactions
-    if let Some(tx_info) = &block.transactions_info {
-        for claim in &tx_info.reward_claims_incorporated {
-            coin_removals.push(CoinRecord {
-                parent_coin_info: hex::encode(&claim.parent_coin_info),
-                puzzle_hash: hex::encode(&claim.puzzle_hash),
-                amount: claim.amount,
-            });
-        }
-    }
-    
-    let has_generator = block.transactions_generator.is_some();
-    let generator_size = block.transactions_generator.as_ref().map(|g| g.len() as u32);
-    
-    BlockData {
-        height: block.reward_chain_block.height,
-        weight: block.reward_chain_block.weight.to_string(),
-        header_hash: hex::encode(block.header_hash()),
-        timestamp: block.foliage_transaction_block.as_ref().map(|f| f.timestamp as u32),
-        coin_additions,
-        coin_removals,
-        has_transactions_generator: has_generator,
-        generator_size,
+
+        Ok(())
     }
 }

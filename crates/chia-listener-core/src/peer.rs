@@ -494,6 +494,15 @@ impl PeerConnection {
         Err(ChiaError::Connection("Failed to get peak height".to_string()))
     }
     
+    pub async fn get_block_by_height(&self, height: u32) -> Result<FullBlock, ChiaError> {
+        // Connect and get block
+        let mut ws_stream = self.connect().await?;
+        self.handshake(&mut ws_stream).await?;
+        
+        // Request the block
+        self.request_block_by_height(height as u64, &mut ws_stream).await
+    }
+    
     pub async fn request_blocks_range(&self, _start_height: u64, _end_height: u64) -> Result<Vec<FullBlock>, ChiaError> {
         // ... existing code ...
         Ok(Vec::new())

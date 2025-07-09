@@ -17,6 +17,15 @@ This project provides a native Node.js module written in Rust that:
 - Add/remove peers dynamically based on their needs
 - Build more complex peer selection strategies
 
+## Project Structure
+
+The project is organized as a Rust workspace with separate crates:
+
+- **`/`** - Main crate with NAPI bindings for Node.js
+- **`crates/chia-listener-core/`** - Reusable core functionality that can be used in other Rust projects
+
+The separation allows the core Chia connection and protocol logic to be reused in pure Rust applications without the Node.js dependencies.
+
 ## Features
 
 - **Native Performance**: Written in Rust for optimal performance
@@ -302,9 +311,11 @@ npm run build:debug
 ## Architecture
 
 The project consists of:
-- **Rust Core** (`src/`): Handles peer connections, protocol messages, and block parsing
-- **NAPI Bindings**: Exposes Rust functionality to JavaScript
+- **Core Crate** (`crates/chia-listener-core/`): Handles peer connections, protocol messages, and block parsing
+- **NAPI Bindings** (`src/`): Thin wrapper that exposes core functionality to JavaScript
 - **TypeScript Definitions** (`index.d.ts`): Provides type safety for TypeScript users
+
+This modular architecture allows the core Chia functionality to be reused in other Rust projects without any Node.js dependencies.
 
 ## License
 
