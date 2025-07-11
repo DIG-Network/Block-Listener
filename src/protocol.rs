@@ -1,10 +1,11 @@
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
 use chia_protocol::{Bytes32, ProtocolMessageTypes};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-
-pub const MAINNET_GENESIS_CHALLENGE: &str = "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
-pub const TESTNET11_GENESIS_CHALLENGE: &str = "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615";
+pub const MAINNET_GENESIS_CHALLENGE: &str =
+    "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
+pub const TESTNET11_GENESIS_CHALLENGE: &str =
+    "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Handshake {
@@ -43,10 +44,10 @@ impl Message {
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, std::io::Error> {
         let mut bytes = Vec::new();
-        
+
         // Write message type
         bytes.push(self.msg_type as u8);
-        
+
         // Write optional ID
         if let Some(id) = self.id {
             bytes.push(1); // Has ID
@@ -54,10 +55,10 @@ impl Message {
         } else {
             bytes.push(0); // No ID
         }
-        
+
         // Write data
         bytes.extend_from_slice(&self.data);
-        
+
         Ok(bytes)
     }
 
@@ -77,10 +78,12 @@ impl Message {
             4 => ProtocolMessageTypes::NewTransaction,
             5 => ProtocolMessageTypes::RequestBlock,
             6 => ProtocolMessageTypes::RespondBlock,
-            _ => return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Unknown message type: {}", bytes[0]),
-            )),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Unknown message type: {}", bytes[0]),
+                ))
+            }
         };
 
         let (id, data_start) = if bytes[1] == 1 {
@@ -107,7 +110,7 @@ pub fn calculate_node_id(cert_der: &[u8]) -> Result<Bytes32, std::io::Error> {
     let mut hasher = Sha256::new();
     hasher.update(cert_der);
     let result = hasher.finalize();
-    
+
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&result);
     Ok(Bytes32::new(bytes))

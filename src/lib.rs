@@ -2,10 +2,10 @@
 
 use napi_derive::napi;
 
+mod error;
+mod event_emitter;
 mod peer;
 mod protocol;
-mod event_emitter;
-mod error;
 mod tls;
 
 pub use error::ChiaError;
