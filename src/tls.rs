@@ -12,7 +12,7 @@ pub fn load_or_generate_cert() -> Result<ChiaCertificate, ChiaError> {
         .join("ssl");
     
     fs::create_dir_all(&cert_dir)
-        .map_err(|e| ChiaError::Io(e))?;
+        .map_err(ChiaError::Io)?;
     
     let cert_path = cert_dir.join("client.crt");
     let key_path = cert_dir.join("client.key");
@@ -20,9 +20,9 @@ pub fn load_or_generate_cert() -> Result<ChiaCertificate, ChiaError> {
     // Try to load existing certificates
     if cert_path.exists() && key_path.exists() {
         let cert_pem = fs::read_to_string(&cert_path)
-            .map_err(|e| ChiaError::Io(e))?;
+            .map_err(ChiaError::Io)?;
         let key_pem = fs::read_to_string(&key_path)
-            .map_err(|e| ChiaError::Io(e))?;
+            .map_err(ChiaError::Io)?;
         
         Ok(ChiaCertificate { cert_pem, key_pem })
     } else {
@@ -32,9 +32,9 @@ pub fn load_or_generate_cert() -> Result<ChiaCertificate, ChiaError> {
         
         // Save for future use
         fs::write(&cert_path, &cert.cert_pem)
-            .map_err(|e| ChiaError::Io(e))?;
+            .map_err(ChiaError::Io)?;
         fs::write(&key_path, &cert.key_pem)
-            .map_err(|e| ChiaError::Io(e))?;
+            .map_err(ChiaError::Io)?;
         
         Ok(cert)
     }

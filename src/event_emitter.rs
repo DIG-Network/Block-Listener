@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, RwLock, oneshot};
 use tracing::{error, info, warn};
-use hex;
 use chia_protocol::FullBlock;
 
 #[napi]
@@ -376,15 +375,15 @@ impl ChiaBlockListener {
                                 if block.foliage_transaction_block.is_some() {
                                     // Farmer reward coin (0.25 XCH)
                                     coin_additions.push(CoinRecord {
-                                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
+                                        parent_coin_info: hex::encode(block.foliage.reward_block_hash),
+                                        puzzle_hash: hex::encode(block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
                                         amount: 250000000000,
                                     });
                                     
                                     // Pool reward coin (1.75 XCH)
                                     coin_additions.push(CoinRecord {
-                                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                                        puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
+                                        parent_coin_info: hex::encode(block.foliage.reward_block_hash),
+                                        puzzle_hash: hex::encode(block.foliage.foliage_block_data.pool_target.puzzle_hash),
                                         amount: 1750000000000,
                                     });
                                 }
@@ -637,7 +636,7 @@ impl ChiaBlockListener {
         let mut blocks = Vec::new();
         
         for height in start_height..=end_height {
-            match self.get_block_by_height(env.clone(), peer_id, height) {
+            match self.get_block_by_height(env, peer_id, height) {
                 Ok(block) => blocks.push(block),
                 Err(e) => {
                     // Log error but continue with other blocks
@@ -1045,14 +1044,14 @@ fn process_block_to_data(block: &FullBlock) -> BlockData {
     // Add farmer and pool reward coins if this is a transaction block
     if block.foliage_transaction_block.is_some() {
         coin_additions.push(CoinRecord {
-            parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-            puzzle_hash: hex::encode(&block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
+            parent_coin_info: hex::encode(block.foliage.reward_block_hash),
+            puzzle_hash: hex::encode(block.foliage.foliage_block_data.farmer_reward_puzzle_hash),
             amount: 250000000000,
         });
         
         coin_additions.push(CoinRecord {
-            parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-            puzzle_hash: hex::encode(&block.foliage.foliage_block_data.pool_target.puzzle_hash),
+            parent_coin_info: hex::encode(block.foliage.reward_block_hash),
+            puzzle_hash: hex::encode(block.foliage.foliage_block_data.pool_target.puzzle_hash),
             amount: 1750000000000,
         });
     }
@@ -1061,8 +1060,8 @@ fn process_block_to_data(block: &FullBlock) -> BlockData {
     if let Some(tx_info) = &block.transactions_info {
         for claim in &tx_info.reward_claims_incorporated {
             coin_removals.push(CoinRecord {
-                parent_coin_info: hex::encode(&claim.parent_coin_info),
-                puzzle_hash: hex::encode(&claim.puzzle_hash),
+                parent_coin_info: hex::encode(claim.parent_coin_info),
+                puzzle_hash: hex::encode(claim.puzzle_hash),
                 amount: claim.amount,
             });
         }

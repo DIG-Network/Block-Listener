@@ -159,7 +159,7 @@ impl PeerConnection {
             Some(connector),
         )
         .await
-        .map_err(|e| ChiaError::WebSocket(e))?;
+        .map_err(ChiaError::WebSocket)?;
 
         info!("WebSocket connection established to {}", self.host);
         Ok(ws_stream)
@@ -201,7 +201,7 @@ impl PeerConnection {
         ws_stream
             .send(WsMessage::Binary(message_bytes))
             .await
-            .map_err(|e| ChiaError::WebSocket(e))?;
+            .map_err(ChiaError::WebSocket)?;
 
         // Wait for peer's handshake
         if let Some(msg) = ws_stream.next().await {
@@ -377,7 +377,7 @@ impl PeerConnection {
         ws_stream
             .send(WsMessage::Binary(request_bytes))
             .await
-            .map_err(|e| ChiaError::WebSocket(e))?;
+            .map_err(ChiaError::WebSocket)?;
 
         // Wait for the response, handling other messages in between
         let mut attempts = 0;
