@@ -1,3 +1,3 @@
-# `datalayer-driver-linux-x64-gnu`
+# `chia-block-listener-linux-x64-gnu`
 
-This is the **x86_64-unknown-linux-gnu** binary for `datalayer-driver`
+This is the **x86_64-unknown-linux-gnu** binary for `chia-block-listener`

@@ -1,3 +1,3 @@
-# `datalayer-driver-win32-x64-msvc`
+# `chia-block-listener-win32-x64-msvc`
 
-This is the **x86_64-pc-windows-msvc** binary for `datalayer-driver`
+This is the **x86_64-pc-windows-msvc** binary for `chia-block-listener`
