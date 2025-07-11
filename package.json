@@ -1,18 +1,40 @@
 {
-  "name": "chia-block-listener",
-  "version": "0.2.0",
+  "name": "@dignetwork/chia-block-listener",
+  "version": "1.0.0",
   "description": "Chia blockchain block listener with event emitter for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DIG-Network/chia-block-listene"
+  },
   "napi": {
     "name": "chia-block-listener",
-    "triples": {}
+    "triples": {
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu"
+      ]
+    }
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4",
+    "ava": "^6.0.1"
+  },
+  "ava": {
+    "timeout": "3m"
+  },
+  "engines": {
+    "node": ">= 10"
   },
   "scripts": {
+    "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
-    "artifacts": "napi artifacts",
+    "test": "ava",
+    "universal": "napi universal",
     "version": "napi version"
   },
   "keywords": [
@@ -23,15 +45,7 @@
     "rust"
   ],
   "author": "",
-  "license": "MIT",
-  "devDependencies": {
-    "@napi-rs/cli": "^2.18.0",
-    "@types/node": "^20.0.0"
-  },
-  "engines": {
-    "node": ">= 14"
-  },
+  "packageManager": "yarn@4.3.1",
   "dependencies": {
-    "@dignetwork/datalayer-driver": "^0.1.35"
   }
 }

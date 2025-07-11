@@ -1,0 +1,25 @@
+{
+  "name": "@dignetwork/chia-block-listener-linux-x64-gnu",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DIG-Network/chia-block-listener"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "chia-block-listener.linux-x64-gnu.node",
+  "files": [
+    "chia-block-listener.linux-x64-gnu.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  },
+  "libc": [
+    "glibc"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@dignetwork/chia-block-listener-win32-x64-msvc",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DIG-Network/chia-block-listener"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "chia-block-listener.win32-x64-msvc.node",
+  "files": [
+    "chia-block-listener.win32-x64-msvc.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  }
+}

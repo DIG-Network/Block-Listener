@@ -1,4 +1,4 @@
-const { ChiaBlockListener, loadChiaCerts, initTracing } = require('./index.js');
+const { ChiaBlockListener, loadChiaCerts, initTracing } = require('../index.js');
 const os = require('os');
 const path = require('path');
 

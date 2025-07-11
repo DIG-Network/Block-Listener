@@ -1,4 +1,4 @@
-const { ChiaBlockListener, initTracing } = require('./index.js');
+const { ChiaBlockListener, initTracing } = require('../index.js');
 const dns = require('dns').promises;
 
 /**

@@ -1,0 +1,22 @@
+{
+  "name": "@dignetwork/chia-block-listener-darwin-arm64",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DIG-Network/chia-block-listener"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "chia-block-listener.darwin-arm64.node",
+  "files": [
+    "chia-block-listener.darwin-arm64.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  }
+}
