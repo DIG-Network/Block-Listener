@@ -83,9 +83,6 @@ jobs:
         with:
           node-version: 20
           cache: yarn
-      - name: Enable Corepack
-        if: ${{ !matrix.settings.docker }}
-        run: corepack enable
       - name: Install
         uses: dtolnay/rust-toolchain@stable
         if: ${{ !matrix.settings.docker }}
@@ -123,9 +120,6 @@ jobs:
           node-version: 20
           cache: yarn
           architecture: x86
-      - name: Enable Corepack for x86
-        if: matrix.settings.target == 'i686-pc-windows-msvc'
-        run: corepack enable
       - name: Build in docker
         uses: addnab/docker-run-action@v3
         if: ${{ matrix.settings.docker }}
@@ -168,8 +162,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: yarn
           architecture: x64
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install dependencies
         run: yarn install
       - name: Download artifacts
@@ -201,8 +193,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: yarn
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install dependencies
         run: yarn install
       - name: Download artifacts
@@ -237,8 +227,6 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install dependencies
         run: |
           yarn config set supportedArchitectures.cpu "arm64"
@@ -273,8 +261,6 @@ jobs:
         with:
           node-version: 20
           cache: yarn
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install dependencies
         run: yarn install
       - name: Download all artifacts
