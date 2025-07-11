@@ -1,6 +1,6 @@
 {
   "name": "@dignetwork/chia-block-listener",
-  "version": "0.1.34",
+  "version": "1.0.0",
   "main": "index.js",
   "types": "index.d.ts",
   "repository": {
