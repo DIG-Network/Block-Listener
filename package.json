@@ -19,7 +19,9 @@
   "license": "MIT",
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
-    "ava": "^6.0.1"
+    "@types/node": "^24.0.13",
+    "ava": "^6.0.1",
+    "typescript": "^5.8.3"
   },
   "ava": {
     "timeout": "3m",
@@ -53,4 +55,4 @@
     "update:images": "echo '💡 Tip: Update your CI images to use newer Rust versions that support edition2024'"
   },
   "packageManager": "yarn@1.22.22"
-} 
+}
