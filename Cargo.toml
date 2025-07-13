@@ -24,7 +24,7 @@ clvm-traits = "0.26"
 
 # Networking
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
-native-tls = "0.2"
+native-tls = { version = "0.2", features = ["vendored"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
