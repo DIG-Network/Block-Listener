@@ -48,7 +48,9 @@
     "cargo:clean": "cargo clean",
     "cargo:update": "cargo update",
     "cargo:reset": "rm -f Cargo.lock && cargo update",
-    "cargo:fix-editions": "yarn cargo:reset && cargo check"
+    "cargo:fix-editions": "yarn cargo:reset && cargo check",
+    "ci:build": "yarn cargo:fix-editions && yarn build",
+    "validate:dependencies": "grep -q 'version = \"1.6.0\"' Cargo.lock && echo '✅ base64ct is correctly pinned to 1.6.0' || (echo '❌ Error: base64ct is not pinned to 1.6.0' && exit 1)"
   },
   "packageManager": "yarn@1.22.22"
 } 

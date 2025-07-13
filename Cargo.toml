@@ -37,6 +37,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 dirs = "5"
 
+# Pin dependencies to avoid edition2024 requirement
+base64ct = "=1.6.0"
+
 [build-dependencies]
 napi-build = "2"
 
