@@ -37,7 +37,10 @@
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava",
     "universal": "napi universal",
-    "version": "napi version"
+    "version": "napi version",
+    "deps:check": "cargo machete",
+    "deps:fix": "cargo machete --fix",
+    "deps:clean": "cargo remove chia-consensus chia-puzzle-types chia-puzzles clvm-utils clvm_tools_rs"
   },
   "packageManager": "yarn@1.22.22"
 } 
