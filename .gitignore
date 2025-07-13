@@ -1,6 +1,6 @@
 # Rust
 target/
-# Cargo.lock - committing to ensure consistent builds with pinned versions
+Cargo.lock
 
 # Node.js
 node_modules/
