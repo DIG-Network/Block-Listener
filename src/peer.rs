@@ -15,8 +15,6 @@ use tracing::{debug, error, info, warn};
 
 type WebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-
-
 #[derive(Clone)]
 pub struct PeerConnection {
     host: String,
@@ -393,6 +391,4 @@ impl PeerConnection {
             "Timeout waiting for block response".to_string(),
         ))
     }
-
-
 }

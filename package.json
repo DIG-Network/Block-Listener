@@ -40,7 +40,11 @@
     "version": "napi version",
     "deps:check": "cargo machete",
     "deps:fix": "cargo machete --fix",
-    "deps:clean": "cargo remove chia-consensus chia-puzzle-types chia-puzzles clvm-utils clvm_tools_rs"
+    "deps:clean": "cargo remove chia-consensus chia-puzzle-types chia-puzzles clvm-utils clvm_tools_rs",
+    "fmt:check": "cargo fmt --all -- --files-with-diff --check",
+    "fmt:fix": "cargo fmt --all",
+    "lint:check": "yarn deps:check && yarn fmt:check",
+    "lint:fix": "yarn deps:fix && yarn fmt:fix"
   },
   "packageManager": "yarn@1.22.22"
 } 
