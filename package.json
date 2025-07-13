@@ -44,7 +44,11 @@
     "fmt:check": "cargo fmt --all -- --files-with-diff --check",
     "fmt:fix": "cargo fmt --all",
     "lint:check": "yarn deps:check && yarn fmt:check",
-    "lint:fix": "yarn deps:fix && yarn fmt:fix"
+    "lint:fix": "yarn deps:fix && yarn fmt:fix",
+    "cargo:clean": "cargo clean",
+    "cargo:update": "cargo update",
+    "cargo:reset": "rm -f Cargo.lock && cargo update",
+    "cargo:fix-editions": "yarn cargo:reset && cargo check"
   },
   "packageManager": "yarn@1.22.22"
 } 
