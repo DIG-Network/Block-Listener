@@ -1,310 +1,376 @@
-# Chia Block Listener
+# Proof of Work
 
-A Rust-based event emitter for Chia blockchain that listens for new blocks from peers and emits events to Node.js applications via NAPI bindings.
-
-## Overview
-
-This project provides a native Node.js module written in Rust that:
-- Connects to Chia full nodes using the native Chia peer protocol
-- Performs the Chia handshake with TLS certificates
-- Listens for new block announcements
-- Emits JavaScript events when new blocks are received
-- Supports multiple peer connections
-
-**Design Philosophy**: This module gives full control to the JavaScript side for peer management. This allows developers to:
-- Implement custom peer discovery (DNS, static lists, etc.)
-- Manage certificates from any source
-- Add/remove peers dynamically based on their needs
-- Build more complex peer selection strategies
+A high-performance Bitcoin-compatible proof of work library for Node.js, built with Rust and NAPI bindings. This library provides efficient mining capabilities using Bitcoin's target-based difficulty system with double SHA-256 hashing.
 
 ## Features
 
-- **Native Performance**: Written in Rust for optimal performance
-- **Event-Based Architecture**: Uses Node.js event emitters for easy integration
+- **Bitcoin-Compatible**: Uses Bitcoin's target-based difficulty system with double SHA-256 hashing
+- **High Performance**: Written in Rust for maximum mining efficiency
+- **Asynchronous Mining**: Non-blocking proof of work computation that won't freeze your application
+- **Cancellable Operations**: Start mining with ability to cancel anytime using handles
+- **Progress Tracking**: Real-time progress monitoring with attempt counts and timing
+- **Unlimited Attempts**: Mine until solution is found (unless explicitly limited)
+- **Nonce Verification**: Verify that a nonce meets difficulty requirements
+- **Standardized Verification**: Consensus-critical verification with algorithm version validation
+- **Difficulty Analysis**: Calculate difficulty levels from hash values
+- **Security Features**: Tamper-resistant verification with algorithm immutability
+- **Cross-platform Support**: Builds for Windows, macOS, and Linux
+- **Multiple Architectures**: Supports x64 and ARM64 architectures
 - **TypeScript Support**: Full TypeScript definitions included
-- **Async/Await API**: Modern async API design
-- **Multiple Peers**: Connect to multiple Chia nodes simultaneously
-- **TLS Support**: Full TLS certificate support for secure connections
 
 ## Installation
 
-First, ensure you have Rust installed:
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+npm install @dignetwork/chia-block-listener
 ```
 
-Install dependencies and build:
-```bash
-npm install
-npm run build
-```
-
-## Usage
+## Quick Start
 
 ```javascript
-const { ChiaBlockListener, loadChiaCerts, initTracing } = require('chia-block-listener');
+const { computeProofOfWorkAsync } = require('@dignetwork/chia-block-listener')
 
-async function main() {
-  // Initialize logging (optional)
-  initTracing();
-
-  // Create a new block listener
-  const listener = new ChiaBlockListener();
-
-  // Load certificates from your Chia installation
-  const certs = loadChiaCerts('/home/user/.chia/mainnet');
-
-  // Add one or more peers
-  const peerId = listener.addPeer(
-    '192.168.1.100',  // Peer IP address
-    8444,             // Port (default: 8444)
-    'mainnet',        // Network ID
-    certs.cert,       // TLS certificate
-    certs.key,        // TLS key
-    certs.ca          // CA certificate
-  );
-
-  // Start listening for blocks and peer events
-  listener.start(
-    // Block callback
-    (block) => {
-      console.log('New block from peer', block.peerId, {
-        height: block.height,
-        weight: block.weight,
-        header_hash: block.header_hash,
-        timestamp: new Date(block.timestamp * 1000)
-      });
-    },
-    // Event callback
-    (event) => {
-      console.log('Peer event:', event.type, 'for peer', event.peerId);
-      if (event.type === 'error') {
-        console.error('Error:', event.message);
-      }
-    }
-  );
-
-  // Stop when done
-  // listener.stop();
+async function mine() {
+  const entropySeed = Buffer.from('my_plot_entropy_seed', 'utf-8')
+  const difficulty = 1.0 // Bitcoin difficulty (1.0 = easiest)
+  
+  // Start mining (returns immediately with a handle)
+  const handle = computeProofOfWorkAsync(entropySeed, difficulty)
+  
+  // Set up Ctrl+C handling for cancellation
+  process.on('SIGINT', () => {
+    console.log('\nCancelling mining...')
+    handle.cancel()
+    process.exit(0)
+  })
+  
+  // Wait for completion
+  while (!handle.isCompleted() && !handle.hasError()) {
+    console.log(`Mining... attempts: ${handle.getAttempts()}`)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  
+  if (handle.hasError()) {
+    console.log('Mining failed:', handle.getError())
+  } else {
+    const result = handle.getResult()
+    console.log('Solution found!')
+    console.log('Nonce:', result.nonce)
+    console.log('Hash:', result.hash)
+    console.log('Attempts:', result.attempts)
+    console.log('Time:', result.time_ms, 'ms')
+  }
 }
 
-main().catch(console.error);
+mine().catch(console.error)
 ```
 
 ## API Reference
 
-### `ChiaBlockListener`
+### Main Functions
 
-The main class for listening to Chia blockchain events.
+#### `computeProofOfWorkAsync(entropySeed, difficulty, maxAttempts?, logAttempts?, doubleSha?): ProofOfWorkHandle`
 
-#### Constructor
-```typescript
-new ChiaBlockListener()
-```
-
-#### Methods
-
-##### `addPeer(host, port, networkId, tlsCert, tlsKey, caCert)`
-Add a peer to connect to.
-
-- `host`: String - The IP address or hostname of the peer
-- `port`: Number - The port number (typically 8444)
-- `networkId`: String - The network ID ('mainnet' or 'testnet11')
-- `tlsCert`: Buffer - The TLS certificate
-- `tlsKey`: Buffer - The TLS private key
-- `caCert`: Buffer - The CA certificate
-
-Returns: `number` - The peer ID assigned to this peer
-
-##### `disconnectPeer(peerId)`
-Disconnect a specific peer.
-
-- `peerId`: Number - The ID of the peer to disconnect
-
-Returns: `boolean` - true if the peer was found and disconnected, false otherwise
-
-##### `start(blockCallback, eventCallback)`
-Start listening for blocks from all added peers.
-
-- `blockCallback`: Function - Called when a new block is received
-- `eventCallback`: Function - Called when peer events occur (connected, disconnected, error)
-
-##### `stop()`
-Stop listening for blocks and disconnect all peers.
-
-##### `isRunning()`
-Check if the listener is currently running.
-
-Returns: `boolean`
-
-##### `getConnectedPeers()`
-Get a list of currently connected peer IDs.
-
-Returns: `number[]` - Array of connected peer IDs
-
-### discoverPeers(count?)
-
-Discovers available Chia peers using DNS introducers and returns a random selection.
+Computes proof of work asynchronously using Bitcoin's target-based difficulty system. Returns immediately with a handle for cancellation and progress tracking.
 
 **Parameters:**
-- `count` (number, optional): Number of random peers to return (defaults to 1)
+- `entropySeed` (Buffer): The entropy seed (plotId) to bind the work to
+- `difficulty` (number): Bitcoin-style difficulty level (1.0 = easiest, higher = harder)
+- `maxAttempts` (number, optional): Maximum attempts before giving up (default: unlimited)
+- `logAttempts` (boolean, optional): Whether to log each hash attempt (default: false)
+- `doubleSha` (boolean, optional): Whether to use double SHA-256 like Bitcoin (default: true)
 
-**Returns:** Promise<string[]> - Array of peer addresses in format "host:port"
+**Returns:** `ProofOfWorkHandle` for cancellation and progress tracking
 
-**Example:**
-```javascript
-// Get 1 random peer (default)
-const peer = await listener.discoverPeers();
+#### `verifyProofOfWork(entropySeed, nonce, difficulty, doubleSha?): boolean`
 
-// Get 10 random peers
-const peers = await listener.discoverPeers(10);
-```
+Verifies that a nonce produces a hash that meets the Bitcoin difficulty target.
 
-### Helper Functions
+**Parameters:**
+- `entropySeed` (Buffer): The entropy seed that was used
+- `nonce` (number): The nonce to verify
+- `difficulty` (number): The required difficulty level
+- `doubleSha` (boolean, optional): Whether to use double SHA-256 (default: true)
 
-#### `loadChiaCerts(chiaRoot)`
-Load Chia certificates from the filesystem.
+**Returns:** `true` if the nonce is valid for the given difficulty
 
-- `chiaRoot`: String - The Chia root directory (e.g., `~/.chia/mainnet`)
+#### `verifyProofOfWorkStandardized(entropySeed, nonce, difficulty, expectedVersion?, doubleSha?): boolean`
 
-Returns: `{ cert: Buffer, key: Buffer, ca: Buffer }`
+**CONSENSUS CRITICAL:** Standardized verification with algorithm validation. This function verifies both the proof of work AND the algorithm compatibility.
 
-#### `initTracing()`
-Initialize logging/tracing. Set the `RUST_LOG` environment variable to control log levels.
+**Parameters:**
+- `entropySeed` (Buffer): The entropy seed that was used
+- `nonce` (number): The nonce to verify
+- `difficulty` (number): The required difficulty level
+- `expectedVersion` (number, optional): Expected algorithm version (default: current)
+- `doubleSha` (boolean, optional): Whether to use double SHA-256 (default: true)
 
-## Event Data
+**Returns:** `true` if the nonce is valid AND algorithm is correct
 
-### Block Event
+**Security Note:** Use this function for network consensus validation. It validates algorithm version compatibility and prevents tampering.
 
-When a new block is received, the block callback receives an object with:
+### Utility Functions
+
+#### `difficultyToTargetHex(difficulty): string`
+
+Convert a Bitcoin-style difficulty to the corresponding target value as hex.
+
+**Parameters:**
+- `difficulty` (number): The difficulty level
+
+**Returns:** The target as a hex string
+
+#### `hashToDifficulty(hash): number`
+
+Calculate the difficulty that a given hash would satisfy.
+
+**Parameters:**
+- `hash` (Buffer): The hash to analyze (32 bytes)
+
+**Returns:** The difficulty level this hash would satisfy
+
+### Consensus & Security Functions
+
+#### `getAlgorithmVersion(): number`
+
+Get the current difficulty algorithm version. This version number is part of the network consensus.
+
+**Returns:** The algorithm version number
+
+#### `getAlgorithmSpec(): string`
+
+Get the algorithm specification hash. This hash identifies the exact algorithm implementation.
+
+**Returns:** The algorithm specification identifier
+
+#### `getAlgorithmParameters(): AlgorithmParameters`
+
+Get the standardized difficulty algorithm parameters. These parameters are part of the network consensus.
+
+**Returns:** Algorithm parameters object containing:
+- `version` (number): Algorithm version number
+- `specHash` (string): Algorithm specification hash
+- `baseZeroBits` (number): Base number of zero bits for difficulty 1.0
+- `logMultiplier` (number): Logarithmic multiplier for difficulty scaling
+- `maxZeroBits` (number): Maximum allowed zero bits
+
+### ProofOfWorkHandle Methods
+
+The handle returned by `computeProofOfWorkAsync` provides these methods:
+
+#### `cancel(): void`
+Cancels the running proof of work computation.
+
+#### `isCancelled(): boolean`
+Returns `true` if the computation has been cancelled.
+
+#### `isCompleted(): boolean`
+Returns `true` if the computation has found a valid solution.
+
+#### `hasError(): boolean`
+Returns `true` if there was an error (cancelled or max attempts reached).
+
+#### `getError(): string | null`
+Returns the error message if there was an error, or `null` if no error.
+
+#### `getResult(): ProofOfWorkResult | null`
+Returns the result if computation completed successfully, or `null` if not completed.
+
+#### `getAttempts(): bigint`
+Returns the current number of attempts made (approximate).
+
+#### `getProgress(): ProofOfWorkProgress`
+Returns detailed progress information (attempts, elapsed time, etc.).
+
+#### `getDifficulty(): number`
+Returns the difficulty level for this computation.
+
+### Result Types
+
+#### `ProofOfWorkResult`
+- `nonce` (bigint): The nonce that was found
+- `hash` (string): The resulting hash as hex string
+- `attempts` (bigint): Number of attempts made
+- `time_ms` (number): Time taken in milliseconds
+- `difficulty` (number): The difficulty that was satisfied
+- `target` (string): The target that was used (as hex string)
+
+#### `ProofOfWorkProgress`
+- `attempts` (bigint): Current number of attempts
+- `nonce` (bigint): Current nonce being tested
+- `elapsed_ms` (number): Time elapsed in milliseconds
+- `attempts_per_second` (number): Estimated attempts per second
+
+## TypeScript Usage
 
 ```typescript
-interface ChiaBlock {
-  peerId: number;        // ID of the peer that sent the block
-  height: number;        // Block height
-  weight: string;        // Chain weight (as string due to large numbers)
-  header_hash: string;   // Block header hash (hex)
-  timestamp: number;     // Block timestamp (seconds since epoch)
-}
-```
+import { 
+  computeProofOfWorkAsync, 
+  verifyProofOfWork,
+  verifyProofOfWorkStandardized,
+  getAlgorithmVersion,
+  getAlgorithmParameters,
+  hashToDifficulty,
+  ProofOfWorkResult,
+  ProofOfWorkHandle,
+  AlgorithmParameters
+} from '@dignetwork/chia-block-listener'
 
-### Peer Event
-
-When peer connection events occur, the event callback receives an object with:
-
-```typescript
-interface PeerEvent {
-  type: 'connected' | 'disconnected' | 'error';  // Event type
-  peerId: number;        // ID of the peer
-  host: string;          // Peer hostname/IP
-  port: number;          // Peer port
-  message?: string;      // Optional message (for errors or disconnect reasons)
-}
-```
-
-## Protocol Details
-
-This implementation:
-1. Establishes WebSocket connections to Chia peers on port 8444
-2. Performs TLS handshake using Chia certificates
-3. Sends the Chia protocol handshake message
-4. Listens for `NewPeak` messages from peers
-5. Requests full block data when new peaks are announced
-6. Emits events when `RespondBlock` messages are received
-
-## Environment Variables
-
-- `CHIA_ROOT`: Override the default Chia root directory
-- `RUST_LOG`: Control logging levels (e.g., `debug`, `info`, `warn`, `error`)
-
-Example:
-```bash
-RUST_LOG=chia_block_listener=debug node example.js
-```
-
-## Examples
-
-Three example files are provided:
-
-### `example.js`
-A simple example that:
-- Loads certificates from your Chia installation
-- Connects to a local Chia full node
-- Logs all received blocks and peer events
-- Handles graceful shutdown
-
-### `example-with-discovery.js`
-A more advanced example that:
-- Implements DNS-based peer discovery
-- Connects to multiple discovered peers
-- Tracks statistics about received blocks per peer
-- Shows periodic status updates with peer connection info
-
-### `example-disconnect.js`
-Demonstrates peer management:
-- Connects to multiple peers
-- Shows how to disconnect specific peers
-- Tracks peer connection status
-- Displays connected peers periodically
-
-### Peer Discovery Example
-
-Here's how you might implement DNS-based peer discovery in Node.js:
-
-```javascript
-const dns = require('dns').promises;
-
-async function discoverPeers() {
-  const introducers = [
-    'dns-introducer.chia.net',
-    'chia.ctrlaltdel.ch',
-    'seeder.dexie.space'
-  ];
+async function mineWithTypes(): Promise<void> {
+  const entropySeed = Buffer.from('my_plot_entropy_seed', 'utf-8')
+  const difficulty = 2.0
   
-  const peers = [];
+  const handle: ProofOfWorkHandle = computeProofOfWorkAsync(entropySeed, difficulty)
   
-  for (const introducer of introducers) {
-    try {
-      const addresses = await dns.resolve4(introducer);
-      peers.push(...addresses.map(ip => ({ host: ip, port: 8444 })));
-    } catch (err) {
-      console.warn(`Failed to resolve ${introducer}:`, err.message);
+  // Wait for completion with proper typing
+  const waitForCompletion = async (handle: ProofOfWorkHandle): Promise<ProofOfWorkResult> => {
+    while (!handle.isCompleted() && !handle.hasError()) {
+      await new Promise(resolve => setTimeout(resolve, 100))
     }
+    
+    if (handle.hasError()) {
+      throw new Error(handle.getError() || 'Unknown error')
+    }
+    
+    const result = handle.getResult()
+    if (!result) {
+      throw new Error('No result available')
+    }
+    
+    return result
   }
   
-  return peers;
-}
-
-// Usage
-const peers = await discoverPeers();
-const listener = new ChiaBlockListener();
-
-// Add discovered peers
-for (const peer of peers.slice(0, 5)) { // Connect to first 5 peers
-  listener.addPeer(peer.host, peer.port, 'mainnet', certs.cert, certs.key, certs.ca);
+  const result: ProofOfWorkResult = await waitForCompletion(handle)
+  
+  // Standard verification
+  const isValid: boolean = verifyProofOfWork(
+    entropySeed, 
+    Number(result.nonce), 
+    difficulty
+  )
+  
+  // Standardized verification (recommended for networks)
+  const isStandardValid: boolean = verifyProofOfWorkStandardized(
+    entropySeed,
+    Number(result.nonce),
+    difficulty
+  )
+  
+  // Check algorithm parameters
+  const params: AlgorithmParameters = getAlgorithmParameters()
+  console.log(`Algorithm version: ${params.version}`)
+  console.log(`Algorithm spec: ${params.specHash}`)
+  
+  console.log('Mining completed, valid:', isValid)
+  console.log('Consensus valid:', isStandardValid)
 }
 ```
 
-## Building from Source
+## Difficulty System
 
-1. Clone the repository
-2. Install Rust and Node.js
-3. Run `npm install`
-4. Run `npm run build`
+This library uses Bitcoin's target-based difficulty system:
+
+- **Difficulty 1.0**: Easiest level, requires 8 leading zero bits in hash
+- **Difficulty 2.0**: Requires 12 leading zero bits
+- **Difficulty 4.0**: Requires 16 leading zero bits (2 zero bytes)
+- **Higher difficulties**: Exponentially more difficult
+
+The difficulty directly corresponds to how computationally expensive it is to find a valid nonce.
+
+## Security & Consensus
+
+This library implements a **consensus-critical verification system** to prevent tampering and ensure network compatibility.
+
+### Algorithm Standardization
+
+- **Version 1 Specification**: `DIG_POW_V1_SMOOTH_LOG_DIFFICULTY_2024`
+- **Formula**: `zero_bits = 8 + log2(difficulty) * 2`
+- **Immutable Parameters**: All difficulty calculation parameters are locked constants
+- **Version Validation**: Algorithm version must match across all network participants
+
+### Security Guarantees
+
+1. **Tamper Detection**: Algorithm spec hash prevents silent modifications
+2. **Version Enforcement**: Mismatched versions are rejected automatically
+3. **Consensus Compliance**: All parameters are immutable constants
+4. **Network Compatibility**: Ensures identical verification across nodes
+5. **Upgrade Safety**: Algorithm changes require coordinated hard forks
+
+### Usage for Network Consensus
+
+```javascript
+// For production networks: Always use standardized verification
+const isValid = verifyProofOfWorkStandardized(entropySeed, nonce, difficulty)
+
+// Check algorithm compatibility
+const version = getAlgorithmVersion()  // Returns: 1
+const spec = getAlgorithmSpec()        // Returns: "DIG_POW_V1_SMOOTH_LOG_DIFFICULTY_2024"
+
+// Validate all proofs with version checking
+function validateNetworkProof(entropySeed, nonce, difficulty) {
+  return verifyProofOfWorkStandardized(entropySeed, nonce, difficulty, 1)
+}
+```
+
+### Network Upgrade Process
+
+To change the difficulty algorithm:
+1. Define new algorithm version (e.g., version 2)
+2. Update consensus parameters and spec hash
+3. Coordinate hard fork across all network participants
+4. Validate version compatibility on peer connections
+
+## Performance Tips
+
+1. **Use appropriate difficulty levels**: Start with 1.0-4.0 for testing
+2. **Monitor progress**: Use the handle to track mining progress
+3. **Set reasonable limits**: Use `maxAttempts` for time-critical applications
+4. **Handle cancellation**: Always provide a way to cancel long-running operations
 
 ## Development
 
-For development builds with debug symbols:
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (latest stable)
+- [Node.js](https://nodejs.org/) (16 or later)
+- [npm](https://www.npmjs.com/)
+
+### Setup
+
 ```bash
-npm run build:debug
+# Clone and install dependencies
+git clone <repository-url>
+cd chia-block-listener
+npm install
+
+# Build the native module
+npm run build
+
+# Run tests
+npm test
 ```
 
-## Architecture
+### Project Structure
 
-The project consists of:
-- **Rust Core** (`src/`): Handles peer connections, protocol messages, and block parsing
-- **NAPI Bindings**: Exposes Rust functionality to JavaScript
-- **TypeScript Definitions** (`index.d.ts`): Provides type safety for TypeScript users
+```
+chia-block-listener/
+├── src/
+│   └── lib.rs          # Rust implementation with NAPI bindings
+├── __test__/
+│   └── index.spec.mjs  # Test suite
+├── npm/                # Platform-specific native binaries
+├── .github/workflows/  # CI/CD pipeline
+├── Cargo.toml          # Rust configuration
+├── package.json        # Node.js configuration
+└── index.d.ts          # TypeScript definitions
+```
+
+## CI/CD & Publishing
+
+This project uses GitHub Actions for:
+- Cross-platform builds (Windows, macOS, Linux)
+- Multiple architectures (x64, ARM64)
+- Automated testing
+- npm publishing based on commit messages
 
 ## License
 
@@ -312,76 +378,10 @@ MIT
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Troubleshooting
-
-### Certificate Loading Issues
-Make sure your `CHIA_ROOT` points to a valid Chia installation with certificates in:
-- `config/ssl/full_node/private_full_node.crt`
-- `config/ssl/full_node/private_full_node.key`
-- `config/ssl/ca/chia_ca.crt`
-
-### Connection Issues
-- Ensure the peer is running and accessible
-- Check firewall settings for port 8444
-- Verify the network ID matches (mainnet vs testnet)
-
-### Building Issues
-- Ensure OpenSSL development libraries are installed: `sudo apt-get install libssl-dev pkg-config`
-- Make sure you have a recent version of Rust (1.70+)
-
-### sync(startHeight?, blockCallback, eventCallback, syncStatusCallback)
-
-Synchronize the blockchain from a starting height to the current height, then switch to listening for new blocks. The sync method automatically distributes requests across all connected peers using round-robin load balancing.
-
-**Parameters:**
-- `startHeight` (number, optional): Starting block height (defaults to 1)
-- `blockCallback` (function): Called for each block received
-- `eventCallback` (function): Called for peer events
-- `syncStatusCallback` (function): Called with sync progress updates
-
-**Sync Status Object:**
-- `phase` (string): Current phase - "historical" or "live"
-- `currentHeight` (number): Current block height being processed
-- `targetHeight` (number | null): Target height for historical sync
-- `blocksPerSecond` (number): Current sync speed
-
-**Example:**
-```javascript
-// Add multiple peers first
-listener.addPeer('peer1.example.com', 8444, 'mainnet');
-listener.addPeer('peer2.example.com', 8444, 'mainnet');
-listener.addPeer('peer3.example.com', 8444, 'mainnet');
-
-// Start the listener to establish connections
-listener.start(() => {}, (event) => {
-    console.log(`Peer event: ${event.type}`);
-});
-
-// Start syncing
-await listener.sync(
-    1000000, // Start from block 1,000,000
-    (block) => {
-        console.log(`Block ${block.height} from peer ${block.peerId}: ${block.header_hash}`);
-    },
-    (event) => {
-        console.log(`Event: ${event.type}`);
-    },
-    (status) => {
-        console.log(`Phase: ${status.phase}, Height: ${status.currentHeight}/${status.targetHeight || 'live'}`);
-    }
-);
-```
-
-## Examples
-
-- `example.js` - Basic connection and block listening
-- `example-with-discovery.js` - Automatic peer discovery
-- `example-disconnect.js` - Handling disconnections
-- `example-historical-blocks.js` - Fetching historical blocks
-- `example-sync.js` - Full blockchain synchronization with progress tracking
-
-## License
-
-MIT
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes and add tests
+4. Ensure all tests pass (`npm test`)
+5. Commit your changes (`git commit -m 'Add some amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request

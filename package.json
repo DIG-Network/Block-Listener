@@ -1,6 +1,6 @@
 {
   "name": "@dignetwork/chia-block-listener",
-  "version": "1.0.0",
+  "version": "0.1.4",
   "main": "index.js",
   "types": "index.d.ts",
   "repository": {
@@ -22,7 +22,10 @@
     "ava": "^6.0.1"
   },
   "ava": {
-    "timeout": "3m"
+    "timeout": "3m",
+    "files": [
+      "__test__/**/*"
+    ]
   },
   "engines": {
     "node": ">= 10"
@@ -35,6 +38,6 @@
     "test": "ava",
     "universal": "napi universal",
     "version": "napi version"
-  }
-}
-
+  },
+  "packageManager": "yarn@1.22.22"
+} 

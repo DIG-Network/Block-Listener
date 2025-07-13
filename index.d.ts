@@ -8,12 +8,11 @@ export declare class ChiaBlockListener {
   constructor()
   addPeer(host: string, port: number, networkId: string): number
   disconnectPeer(peerId: number): boolean
-  start(blockCallback: (...args: any[]) => any, eventCallback: (...args: any[]) => any): void
-  stop(): void
-  isRunning(): boolean
+  disconnectAllPeers(): void
   getConnectedPeers(): Array<number>
+  on(event: string, callback: (...args: any[]) => any): void
+  off(event: string, callback: (...args: any[]) => any): void
   getBlockByHeight(peerId: number, height: number): object
   getBlocksRange(peerId: number, startHeight: number, endHeight: number): Array<object>
-  discoverPeers(count?: number | undefined | null): Promise<Array<string>>
-  sync(startHeight: number | undefined | null, blockCallback: (...args: any[]) => any, eventCallback: (...args: any[]) => any, syncStatusCallback: (...args: any[]) => any): void
+  processTransactionGenerator(generatorHex: string): object
 }

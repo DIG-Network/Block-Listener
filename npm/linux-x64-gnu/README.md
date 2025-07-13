@@ -1,3 +1,3 @@
 # `chia-block-listener-linux-x64-gnu`
 
-This is the **x86_64-unknown-linux-gnu** binary for `chia-block-listener`
+This is the **x86_64-unknown-linux-gnu** binary for `chia-block-listener` 

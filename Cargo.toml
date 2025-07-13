@@ -19,6 +19,13 @@ futures-util = "0.3"
 chia-protocol = "0.26"
 chia-traits = "0.26"
 chia-ssl = "0.26"
+chia-consensus = "0.26"
+chia-puzzle-types = "0.26"
+chia-puzzles = "0.20.1"
+clvmr = "0.14.0"
+clvm-traits = "0.26"
+clvm-utils = "0.26"
+clvm_tools_rs = "0.3.0"
 
 # Networking
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
@@ -34,7 +41,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 dirs = "5"
-rand = "0.8"
 
 [build-dependencies]
 napi-build = "2"

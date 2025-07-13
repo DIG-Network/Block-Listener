@@ -1,1 +1,0 @@
-napi build --platform --release 
