@@ -53,7 +53,7 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: npm run build -- --target x86_64-apple-darwin && node
+            build: npm run build -- --target x86_64-apple-darwin
           - host: windows-latest
             build: npm run build -- --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
