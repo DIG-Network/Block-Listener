@@ -1,22 +1,17 @@
-# Proof of Work
+# Chia Block Listener
 
-A high-performance Bitcoin-compatible proof of work library for Node.js, built with Rust and NAPI bindings. This library provides efficient mining capabilities using Bitcoin's target-based difficulty system with double SHA-256 hashing.
+A high-performance Chia blockchain listener for Node.js, built with Rust and NAPI bindings. This library provides real-time monitoring of the Chia blockchain with efficient peer connections and block parsing capabilities.
 
 ## Features
 
-- **Bitcoin-Compatible**: Uses Bitcoin's target-based difficulty system with double SHA-256 hashing
-- **High Performance**: Written in Rust for maximum mining efficiency
-- **Asynchronous Mining**: Non-blocking proof of work computation that won't freeze your application
-- **Cancellable Operations**: Start mining with ability to cancel anytime using handles
-- **Progress Tracking**: Real-time progress monitoring with attempt counts and timing
-- **Unlimited Attempts**: Mine until solution is found (unless explicitly limited)
-- **Nonce Verification**: Verify that a nonce meets difficulty requirements
-- **Standardized Verification**: Consensus-critical verification with algorithm version validation
-- **Difficulty Analysis**: Calculate difficulty levels from hash values
-- **Security Features**: Tamper-resistant verification with algorithm immutability
-- **Cross-platform Support**: Builds for Windows, macOS, and Linux
-- **Multiple Architectures**: Supports x64 and ARM64 architectures
-- **TypeScript Support**: Full TypeScript definitions included
+- **Real-time Block Monitoring**: Listen for new blocks as they're produced on the Chia network
+- **Peer Management**: Connect to multiple Chia full nodes simultaneously
+- **Efficient Parsing**: Fast extraction of coin spends, additions, and removals from blocks
+- **Event-Driven Architecture**: TypeScript-friendly event system with full type safety
+- **Transaction Analysis**: Parse CLVM puzzles and solutions from coin spends
+- **Historical Block Access**: Retrieve blocks by height or ranges
+- **Cross-platform Support**: Works on Windows, macOS, and Linux (x64 and ARM64)
+- **TypeScript Support**: Complete TypeScript definitions with IntelliSense
 
 ## Installation
 
@@ -27,311 +22,350 @@ npm install @dignetwork/chia-block-listener
 ## Quick Start
 
 ```javascript
-const { computeProofOfWorkAsync } = require('@dignetwork/chia-block-listener')
+const { ChiaBlockListener, initTracing } = require('@dignetwork/chia-block-listener')
 
-async function mine() {
-  const entropySeed = Buffer.from('my_plot_entropy_seed', 'utf-8')
-  const difficulty = 1.0 // Bitcoin difficulty (1.0 = easiest)
-  
-  // Start mining (returns immediately with a handle)
-  const handle = computeProofOfWorkAsync(entropySeed, difficulty)
-  
-  // Set up Ctrl+C handling for cancellation
-  process.on('SIGINT', () => {
-    console.log('\nCancelling mining...')
-    handle.cancel()
-    process.exit(0)
-  })
-  
-  // Wait for completion
-  while (!handle.isCompleted() && !handle.hasError()) {
-    console.log(`Mining... attempts: ${handle.getAttempts()}`)
-    await new Promise(resolve => setTimeout(resolve, 1000))
-  }
-  
-  if (handle.hasError()) {
-    console.log('Mining failed:', handle.getError())
-  } else {
-    const result = handle.getResult()
-    console.log('Solution found!')
-    console.log('Nonce:', result.nonce)
-    console.log('Hash:', result.hash)
-    console.log('Attempts:', result.attempts)
-    console.log('Time:', result.time_ms, 'ms')
-  }
-}
+// Initialize tracing for debugging (optional)
+initTracing()
 
-mine().catch(console.error)
+// Create a new listener instance
+const listener = new ChiaBlockListener()
+
+// Listen for block events
+listener.on('blockReceived', (block) => {
+  console.log(`New block received: ${block.height}`)
+  console.log(`Header hash: ${block.headerHash}`)
+  console.log(`Timestamp: ${new Date(block.timestamp * 1000)}`)
+  console.log(`Coin additions: ${block.coinAdditions.length}`)
+  console.log(`Coin removals: ${block.coinRemovals.length}`)
+  console.log(`Coin spends: ${block.coinSpends.length}`)
+})
+
+// Listen for peer connection events
+listener.on('peerConnected', (peer) => {
+  console.log(`Connected to peer: ${peer.peerId} (${peer.host}:${peer.port})`)
+})
+
+listener.on('peerDisconnected', (peer) => {
+  console.log(`Disconnected from peer: ${peer.peerId}`)
+  if (peer.message) {
+    console.log(`Reason: ${peer.message}`)
+  }
+})
+
+// Connect to a Chia full node
+const peerId = listener.addPeer('localhost', 8444, 'mainnet')
+console.log(`Added peer: ${peerId}`)
+
+// Keep the process running
+process.on('SIGINT', () => {
+  console.log('Shutting down...')
+  listener.disconnectAllPeers()
+  process.exit(0)
+})
 ```
 
 ## API Reference
 
-### Main Functions
+### ChiaBlockListener Class
 
-#### `computeProofOfWorkAsync(entropySeed, difficulty, maxAttempts?, logAttempts?, doubleSha?): ProofOfWorkHandle`
+#### Constructor
 
-Computes proof of work asynchronously using Bitcoin's target-based difficulty system. Returns immediately with a handle for cancellation and progress tracking.
+```javascript
+const listener = new ChiaBlockListener()
+```
 
-**Parameters:**
-- `entropySeed` (Buffer): The entropy seed (plotId) to bind the work to
-- `difficulty` (number): Bitcoin-style difficulty level (1.0 = easiest, higher = harder)
-- `maxAttempts` (number, optional): Maximum attempts before giving up (default: unlimited)
-- `logAttempts` (boolean, optional): Whether to log each hash attempt (default: false)
-- `doubleSha` (boolean, optional): Whether to use double SHA-256 like Bitcoin (default: true)
+Creates a new Chia block listener instance.
 
-**Returns:** `ProofOfWorkHandle` for cancellation and progress tracking
+#### Methods
 
-#### `verifyProofOfWork(entropySeed, nonce, difficulty, doubleSha?): boolean`
+##### `addPeer(host, port, networkId): string`
 
-Verifies that a nonce produces a hash that meets the Bitcoin difficulty target.
+Connects to a Chia full node and starts listening for blocks.
 
 **Parameters:**
-- `entropySeed` (Buffer): The entropy seed that was used
-- `nonce` (number): The nonce to verify
-- `difficulty` (number): The required difficulty level
-- `doubleSha` (boolean, optional): Whether to use double SHA-256 (default: true)
+- `host` (string): The hostname or IP address of the Chia node
+- `port` (number): The port number (typically 8444 for mainnet)
+- `networkId` (string): The network identifier ('mainnet', 'testnet', etc.)
 
-**Returns:** `true` if the nonce is valid for the given difficulty
+**Returns:** A unique peer ID string for this connection
 
-#### `verifyProofOfWorkStandardized(entropySeed, nonce, difficulty, expectedVersion?, doubleSha?): boolean`
+##### `disconnectPeer(peerId): boolean`
 
-**CONSENSUS CRITICAL:** Standardized verification with algorithm validation. This function verifies both the proof of work AND the algorithm compatibility.
-
-**Parameters:**
-- `entropySeed` (Buffer): The entropy seed that was used
-- `nonce` (number): The nonce to verify
-- `difficulty` (number): The required difficulty level
-- `expectedVersion` (number, optional): Expected algorithm version (default: current)
-- `doubleSha` (boolean, optional): Whether to use double SHA-256 (default: true)
-
-**Returns:** `true` if the nonce is valid AND algorithm is correct
-
-**Security Note:** Use this function for network consensus validation. It validates algorithm version compatibility and prevents tampering.
-
-### Utility Functions
-
-#### `difficultyToTargetHex(difficulty): string`
-
-Convert a Bitcoin-style difficulty to the corresponding target value as hex.
+Disconnects from a specific peer.
 
 **Parameters:**
-- `difficulty` (number): The difficulty level
+- `peerId` (string): The peer ID returned by `addPeer()`
 
-**Returns:** The target as a hex string
+**Returns:** `true` if the peer was successfully disconnected, `false` otherwise
 
-#### `hashToDifficulty(hash): number`
+##### `disconnectAllPeers(): void`
 
-Calculate the difficulty that a given hash would satisfy.
+Disconnects from all connected peers.
+
+##### `getConnectedPeers(): string[]`
+
+Returns an array of currently connected peer IDs.
+
+##### `getBlockByHeight(peerId, height): BlockReceivedEvent`
+
+Retrieves a specific block by its height from a connected peer.
 
 **Parameters:**
-- `hash` (Buffer): The hash to analyze (32 bytes)
+- `peerId` (string): The peer ID to query
+- `height` (number): The block height to retrieve
 
-**Returns:** The difficulty level this hash would satisfy
+**Returns:** A `BlockReceivedEvent` object containing the block data
 
-### Consensus & Security Functions
+##### `getBlocksRange(peerId, startHeight, endHeight): BlockReceivedEvent[]`
 
-#### `getAlgorithmVersion(): number`
+Retrieves a range of blocks from a connected peer.
 
-Get the current difficulty algorithm version. This version number is part of the network consensus.
+**Parameters:**
+- `peerId` (string): The peer ID to query
+- `startHeight` (number): The starting block height (inclusive)
+- `endHeight` (number): The ending block height (inclusive)
 
-**Returns:** The algorithm version number
+**Returns:** An array of `BlockReceivedEvent` objects
 
-#### `getAlgorithmSpec(): string`
+### Events
 
-Get the algorithm specification hash. This hash identifies the exact algorithm implementation.
+The `ChiaBlockListener` emits the following events:
 
-**Returns:** The algorithm specification identifier
+#### `blockReceived`
 
-#### `getAlgorithmParameters(): AlgorithmParameters`
+Fired when a new block is received from any connected peer.
 
-Get the standardized difficulty algorithm parameters. These parameters are part of the network consensus.
+**Callback:** `(event: BlockReceivedEvent) => void`
 
-**Returns:** Algorithm parameters object containing:
-- `version` (number): Algorithm version number
-- `specHash` (string): Algorithm specification hash
-- `baseZeroBits` (number): Base number of zero bits for difficulty 1.0
-- `logMultiplier` (number): Logarithmic multiplier for difficulty scaling
-- `maxZeroBits` (number): Maximum allowed zero bits
+#### `peerConnected`
 
-### ProofOfWorkHandle Methods
+Fired when a connection to a peer is established.
 
-The handle returned by `computeProofOfWorkAsync` provides these methods:
+**Callback:** `(event: PeerConnectedEvent) => void`
 
-#### `cancel(): void`
-Cancels the running proof of work computation.
+#### `peerDisconnected`
 
-#### `isCancelled(): boolean`
-Returns `true` if the computation has been cancelled.
+Fired when a peer connection is lost.
 
-#### `isCompleted(): boolean`
-Returns `true` if the computation has found a valid solution.
+**Callback:** `(event: PeerDisconnectedEvent) => void`
 
-#### `hasError(): boolean`
-Returns `true` if there was an error (cancelled or max attempts reached).
+### Event Data Types
 
-#### `getError(): string | null`
-Returns the error message if there was an error, or `null` if no error.
+#### `BlockReceivedEvent`
 
-#### `getResult(): ProofOfWorkResult | null`
-Returns the result if computation completed successfully, or `null` if not completed.
+```typescript
+interface BlockReceivedEvent {
+  peerId: string                    // ID of the peer that sent this block
+  height: number                    // Block height
+  weight: string                    // Block weight as string
+  headerHash: string               // Block header hash (hex)
+  timestamp: number                // Block timestamp (Unix time)
+  coinAdditions: CoinRecord[]      // New coins created in this block
+  coinRemovals: CoinRecord[]       // Coins spent in this block
+  coinSpends: CoinSpend[]         // Detailed spend information
+  coinCreations: CoinRecord[]      // Coins created by puzzles
+  hasTransactionsGenerator: boolean // Whether block has a generator
+  generatorSize: number            // Size of the generator bytecode
+}
+```
 
-#### `getAttempts(): bigint`
-Returns the current number of attempts made (approximate).
+#### `PeerConnectedEvent`
 
-#### `getProgress(): ProofOfWorkProgress`
-Returns detailed progress information (attempts, elapsed time, etc.).
+```typescript
+interface PeerConnectedEvent {
+  peerId: string  // Unique peer identifier
+  host: string    // Peer hostname/IP
+  port: number    // Peer port number
+}
+```
 
-#### `getDifficulty(): number`
-Returns the difficulty level for this computation.
+#### `PeerDisconnectedEvent`
 
-### Result Types
+```typescript
+interface PeerDisconnectedEvent {
+  peerId: string    // Unique peer identifier
+  host: string      // Peer hostname/IP
+  port: number      // Peer port number
+  message?: string  // Optional disconnection reason
+}
+```
 
-#### `ProofOfWorkResult`
-- `nonce` (bigint): The nonce that was found
-- `hash` (string): The resulting hash as hex string
-- `attempts` (bigint): Number of attempts made
-- `time_ms` (number): Time taken in milliseconds
-- `difficulty` (number): The difficulty that was satisfied
-- `target` (string): The target that was used (as hex string)
+#### `CoinRecord`
 
-#### `ProofOfWorkProgress`
-- `attempts` (bigint): Current number of attempts
-- `nonce` (bigint): Current nonce being tested
-- `elapsed_ms` (number): Time elapsed in milliseconds
-- `attempts_per_second` (number): Estimated attempts per second
+```typescript
+interface CoinRecord {
+  parentCoinInfo: string  // Parent coin ID (hex)
+  puzzleHash: string      // Puzzle hash (hex)
+  amount: string          // Coin amount as string
+}
+```
+
+#### `CoinSpend`
+
+```typescript
+interface CoinSpend {
+  coin: CoinRecord        // The coin being spent
+  puzzleReveal: string    // CLVM puzzle bytecode (hex)
+  solution: string        // CLVM solution bytecode (hex)
+  realData: boolean       // Whether this is real spend data
+  parsingMethod: string   // Method used to parse the spend
+  offset: number          // Offset in the generator bytecode
+}
+```
 
 ## TypeScript Usage
 
 ```typescript
 import { 
-  computeProofOfWorkAsync, 
-  verifyProofOfWork,
-  verifyProofOfWorkStandardized,
-  getAlgorithmVersion,
-  getAlgorithmParameters,
-  hashToDifficulty,
-  ProofOfWorkResult,
-  ProofOfWorkHandle,
-  AlgorithmParameters
+  ChiaBlockListener, 
+  BlockReceivedEvent, 
+  PeerConnectedEvent, 
+  PeerDisconnectedEvent,
+  CoinRecord,
+  CoinSpend,
+  initTracing,
+  getEventTypes
 } from '@dignetwork/chia-block-listener'
 
-async function mineWithTypes(): Promise<void> {
-  const entropySeed = Buffer.from('my_plot_entropy_seed', 'utf-8')
-  const difficulty = 2.0
+// Initialize tracing for debugging
+initTracing()
+
+// Create listener with proper typing
+const listener = new ChiaBlockListener()
+
+// Type-safe event handlers
+listener.on('blockReceived', (block: BlockReceivedEvent) => {
+  console.log(`Block ${block.height} from peer ${block.peerId}`)
   
-  const handle: ProofOfWorkHandle = computeProofOfWorkAsync(entropySeed, difficulty)
+  // Process coin additions
+  block.coinAdditions.forEach((coin: CoinRecord) => {
+    console.log(`New coin: ${coin.amount} mojos`)
+  })
   
-  // Wait for completion with proper typing
-  const waitForCompletion = async (handle: ProofOfWorkHandle): Promise<ProofOfWorkResult> => {
-    while (!handle.isCompleted() && !handle.hasError()) {
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-    
-    if (handle.hasError()) {
-      throw new Error(handle.getError() || 'Unknown error')
-    }
-    
-    const result = handle.getResult()
-    if (!result) {
-      throw new Error('No result available')
-    }
-    
-    return result
+  // Process coin spends
+  block.coinSpends.forEach((spend: CoinSpend) => {
+    console.log(`Spend: ${spend.coin.amount} mojos`)
+    console.log(`Puzzle: ${spend.puzzleReveal}`)
+    console.log(`Solution: ${spend.solution}`)
+  })
+})
+
+listener.on('peerConnected', (peer: PeerConnectedEvent) => {
+  console.log(`Connected: ${peer.peerId} at ${peer.host}:${peer.port}`)
+})
+
+listener.on('peerDisconnected', (peer: PeerDisconnectedEvent) => {
+  console.log(`Disconnected: ${peer.peerId}`)
+  if (peer.message) {
+    console.log(`Reason: ${peer.message}`)
   }
-  
-  const result: ProofOfWorkResult = await waitForCompletion(handle)
-  
-  // Standard verification
-  const isValid: boolean = verifyProofOfWork(
-    entropySeed, 
-    Number(result.nonce), 
-    difficulty
-  )
-  
-  // Standardized verification (recommended for networks)
-  const isStandardValid: boolean = verifyProofOfWorkStandardized(
-    entropySeed,
-    Number(result.nonce),
-    difficulty
-  )
-  
-  // Check algorithm parameters
-  const params: AlgorithmParameters = getAlgorithmParameters()
-  console.log(`Algorithm version: ${params.version}`)
-  console.log(`Algorithm spec: ${params.specHash}`)
-  
-  console.log('Mining completed, valid:', isValid)
-  console.log('Consensus valid:', isStandardValid)
+})
+
+// Connect to peers
+const mainnetPeer = listener.addPeer('localhost', 8444, 'mainnet')
+const testnetPeer = listener.addPeer('testnet-node.chia.net', 58444, 'testnet')
+
+// Get historical blocks
+async function getHistoricalBlocks() {
+  try {
+    const block = listener.getBlockByHeight(mainnetPeer, 1000000)
+    console.log(`Block 1000000 hash: ${block.headerHash}`)
+    
+    const blocks = listener.getBlocksRange(mainnetPeer, 1000000, 1000010)
+    console.log(`Retrieved ${blocks.length} blocks`)
+  } catch (error) {
+    console.error('Error getting blocks:', error)
+  }
 }
+
+// Get event type constants
+const eventTypes = getEventTypes()
+console.log('Available events:', eventTypes)
 ```
 
-## Difficulty System
+## Advanced Usage
 
-This library uses Bitcoin's target-based difficulty system:
-
-- **Difficulty 1.0**: Easiest level, requires 8 leading zero bits in hash
-- **Difficulty 2.0**: Requires 12 leading zero bits
-- **Difficulty 4.0**: Requires 16 leading zero bits (2 zero bytes)
-- **Higher difficulties**: Exponentially more difficult
-
-The difficulty directly corresponds to how computationally expensive it is to find a valid nonce.
-
-## Security & Consensus
-
-This library implements a **consensus-critical verification system** to prevent tampering and ensure network compatibility.
-
-### Algorithm Standardization
-
-- **Version 1 Specification**: `DIG_POW_V1_SMOOTH_LOG_DIFFICULTY_2024`
-- **Formula**: `zero_bits = 8 + log2(difficulty) * 2`
-- **Immutable Parameters**: All difficulty calculation parameters are locked constants
-- **Version Validation**: Algorithm version must match across all network participants
-
-### Security Guarantees
-
-1. **Tamper Detection**: Algorithm spec hash prevents silent modifications
-2. **Version Enforcement**: Mismatched versions are rejected automatically
-3. **Consensus Compliance**: All parameters are immutable constants
-4. **Network Compatibility**: Ensures identical verification across nodes
-5. **Upgrade Safety**: Algorithm changes require coordinated hard forks
-
-### Usage for Network Consensus
+### Monitoring Specific Transactions
 
 ```javascript
-// For production networks: Always use standardized verification
-const isValid = verifyProofOfWorkStandardized(entropySeed, nonce, difficulty)
-
-// Check algorithm compatibility
-const version = getAlgorithmVersion()  // Returns: 1
-const spec = getAlgorithmSpec()        // Returns: "DIG_POW_V1_SMOOTH_LOG_DIFFICULTY_2024"
-
-// Validate all proofs with version checking
-function validateNetworkProof(entropySeed, nonce, difficulty) {
-  return verifyProofOfWorkStandardized(entropySeed, nonce, difficulty, 1)
-}
+// Monitor all coin spends for a specific puzzle hash
+listener.on('blockReceived', (block) => {
+  const targetPuzzleHash = '0x1234...' // Your puzzle hash
+  
+  block.coinSpends.forEach((spend) => {
+    if (spend.coin.puzzleHash === targetPuzzleHash) {
+      console.log('Found spend for our puzzle!')
+      console.log('Amount:', spend.coin.amount)
+      console.log('Solution:', spend.solution)
+    }
+  })
+})
 ```
 
-### Network Upgrade Process
+### Multiple Network Monitoring
 
-To change the difficulty algorithm:
-1. Define new algorithm version (e.g., version 2)
-2. Update consensus parameters and spec hash
-3. Coordinate hard fork across all network participants
-4. Validate version compatibility on peer connections
+```javascript
+// Monitor both mainnet and testnet
+const mainnetPeer = listener.addPeer('localhost', 8444, 'mainnet')
+const testnetPeer = listener.addPeer('localhost', 58444, 'testnet')
+
+listener.on('blockReceived', (block) => {
+  if (block.peerId === mainnetPeer) {
+    console.log(`Mainnet block ${block.height}`)
+  } else if (block.peerId === testnetPeer) {
+    console.log(`Testnet block ${block.height}`)
+  }
+})
+```
+
+### Connection Management
+
+```javascript
+// Automatic reconnection
+listener.on('peerDisconnected', (peer) => {
+  console.log(`Lost connection to ${peer.peerId}, reconnecting...`)
+  
+  // Reconnect after 5 seconds
+  setTimeout(() => {
+    try {
+      listener.addPeer(peer.host, peer.port, 'mainnet')
+      console.log('Reconnected successfully')
+    } catch (error) {
+      console.error('Reconnection failed:', error)
+    }
+  }, 5000)
+})
+```
+
+## Utility Functions
+
+### `initTracing(): void`
+
+Initializes the Rust tracing system for debugging purposes. Call this before creating any `ChiaBlockListener` instances if you want to see debug output.
+
+### `getEventTypes(): EventTypes`
+
+Returns an object containing the event type constants:
+
+```javascript
+const eventTypes = getEventTypes()
+console.log(eventTypes)
+// Output: { blockReceived: "blockReceived", peerConnected: "peerConnected", peerDisconnected: "peerDisconnected" }
+```
 
 ## Performance Tips
 
-1. **Use appropriate difficulty levels**: Start with 1.0-4.0 for testing
-2. **Monitor progress**: Use the handle to track mining progress
-3. **Set reasonable limits**: Use `maxAttempts` for time-critical applications
-4. **Handle cancellation**: Always provide a way to cancel long-running operations
+1. **Use specific event handlers**: Only listen for the events you need
+2. **Process blocks efficiently**: Avoid heavy computation in event handlers
+3. **Manage connections**: Don't create too many peer connections simultaneously
+4. **Handle errors gracefully**: Always wrap peer operations in try-catch blocks
 
 ## Development
 
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) (16 or later)
+- [Node.js](https://nodejs.org/) (20 or later)
 - [npm](https://www.npmjs.com/)
 
 ### Setup
@@ -353,15 +387,20 @@ npm test
 
 ```
 chia-block-listener/
-├── src/
-│   └── lib.rs          # Rust implementation with NAPI bindings
-├── __test__/
-│   └── index.spec.mjs  # Test suite
-├── npm/                # Platform-specific native binaries
-├── .github/workflows/  # CI/CD pipeline
-├── Cargo.toml          # Rust configuration
-├── package.json        # Node.js configuration
-└── index.d.ts          # TypeScript definitions
+├── src/                     # Rust source code
+│   ├── lib.rs              # Main NAPI bindings
+│   ├── peer.rs             # Peer connection management
+│   ├── protocol.rs         # Chia protocol implementation
+│   ├── event_emitter.rs    # Event system
+│   └── tls.rs              # TLS connection handling
+├── crate/                  # Additional Rust crates
+│   └── chia-generator-parser/ # CLVM parser
+├── __test__/               # Test suite
+├── npm/                    # Platform-specific binaries
+├── .github/workflows/      # CI/CD pipeline
+├── Cargo.toml              # Rust configuration
+├── package.json            # Node.js configuration
+└── index.d.ts              # TypeScript definitions
 ```
 
 ## CI/CD & Publishing
@@ -369,8 +408,8 @@ chia-block-listener/
 This project uses GitHub Actions for:
 - Cross-platform builds (Windows, macOS, Linux)
 - Multiple architectures (x64, ARM64)
-- Automated testing
-- npm publishing based on commit messages
+- Automated testing on all platforms
+- npm publishing based on git tags
 
 ## License
 
@@ -385,3 +424,10 @@ MIT
 5. Commit your changes (`git commit -m 'Add some amazing feature'`)
 6. Push to the branch (`git push origin feature/amazing-feature`)
 7. Open a Pull Request
+
+## Support
+
+For issues and questions:
+- GitHub Issues: [Report bugs or request features](https://github.com/DIG-Network/chia-block-listener/issues)
+- Documentation: Check the TypeScript definitions in `index.d.ts`
+- Examples: See the `examples/` directory for more usage examples 
