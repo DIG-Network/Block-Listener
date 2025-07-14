@@ -249,10 +249,16 @@ jobs:
       - name: Setup and run tests
         uses: addnab/docker-run-action@v3
         with:
-          image: node:${{ matrix.node }}-noble
+          image: ubuntu:24.04
           options: '--platform linux/arm64 -v ${{ github.workspace }}:/build -w /build'
           run: |
             set -e
+            apt-get update
+            apt-get install -y curl
+            curl -fsSL https://deb.nodesource.com/setup_${{ matrix.node }}.x | bash -
+            apt-get install -y nodejs
+            node --version
+            npm --version
             npm ci
             npm test
             ls -la
