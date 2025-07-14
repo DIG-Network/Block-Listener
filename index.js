@@ -310,7 +310,8 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { ChiaBlockListener, initTracing } = nativeBinding
+const { getEventTypes, ChiaBlockListener, initTracing } = nativeBinding
 
+module.exports.getEventTypes = getEventTypes
 module.exports.ChiaBlockListener = ChiaBlockListener
 module.exports.initTracing = initTracing

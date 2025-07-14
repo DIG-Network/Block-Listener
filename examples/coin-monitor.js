@@ -1,5 +1,42 @@
 const { ChiaBlockListener, initTracing } = require('../index.js');
 const dns = require('dns').promises;
+const fs = require('fs');
+const path = require('path');
+
+// Create log file with timestamp
+const logFileName = `coin-monitor-${new Date().toISOString().replace(/:/g, '-').split('.')[0]}.log`;
+const logFilePath = path.join(__dirname, logFileName);
+const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+// Override console.log to also write to file
+const originalConsoleLog = console.log;
+console.log = function(...args) {
+  // Write to console
+  originalConsoleLog.apply(console, args);
+  
+  // Write to file
+  const timestamp = new Date().toISOString();
+  const message = args.map(arg => 
+    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+  ).join(' ');
+  logStream.write(`[${timestamp}] ${message}\n`);
+};
+
+// Override console.error to also write to file
+const originalConsoleError = console.error;
+console.error = function(...args) {
+  // Write to console
+  originalConsoleError.apply(console, args);
+  
+  // Write to file
+  const timestamp = new Date().toISOString();
+  const message = args.map(arg => 
+    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+  ).join(' ');
+  logStream.write(`[${timestamp}] [ERROR] ${message}\n`);
+};
+
+console.log(`📝 Logging to file: ${logFilePath}`);
 
 // DNS introducers for peer discovery
 const MAINNET_DNS_INTRODUCERS = [
@@ -85,7 +122,7 @@ async function connectToAnyPeer(listener, networkId = 'mainnet', maxAttempts = 1
     
     try {
       const peerId = listener.addPeer(peer.host, peer.port, networkId);
-      console.log(`  ✅ Successfully added peer ${peerId} (${displayAddress})`);
+      console.log(`  ✅ Successfully added peer: ${peerId}`);
       return peerId;
         } catch (error) {
       console.log(`  ❌ Failed to add peer ${displayAddress}: ${error.message}`);
@@ -105,7 +142,7 @@ async function main() {
   try {
     // Set up event listeners
     listener.on('peerConnected', (event) => {
-      console.log(`✅ Peer ${event.peerId} connected: ${event.host}:${event.port}`);
+      console.log(`✅ Peer connected: ${event.peerId}`);
       console.log(`🔊 Listening for real-time blocks...`);
     });
 
@@ -119,7 +156,7 @@ async function main() {
       console.log('\n📦 Real-time Block Event:');
       console.log(JSON.stringify(event, null, 2));
       console.log('\n' + '='.repeat(80) + '\n');
-});
+    });
 
     // Connect to a peer
     const networkId = 'mainnet';
@@ -133,7 +170,12 @@ async function main() {
     process.on('SIGINT', () => {
       console.log('\nShutting down...');
       listener.disconnectAllPeers();
-      process.exit(0);
+      
+      // Close the log stream
+      logStream.end(() => {
+        console.log(`Log saved to: ${logFilePath}`);
+        process.exit(0);
+      });
     });
 
     // Keep the process running
@@ -141,8 +183,12 @@ async function main() {
 
   } catch (error) {
     console.error('Error:', error);
-    process.exit(1);
-    }
+    
+    // Close the log stream on error
+    logStream.end(() => {
+      process.exit(1);
+    });
+  }
 }
 
 // Run the monitor

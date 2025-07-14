@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// Re-export proper Chia types  
-pub use chia_protocol::{Coin, Bytes32};
+// Re-export proper Chia types
+pub use chia_protocol::{Bytes32, Coin};
 
 // Basic numeric types - use standard Rust types for simplicity
 pub type uint32 = u32;
@@ -22,38 +22,35 @@ pub type Hash32 = Bytes32;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedBlock {
     /// Block height
-    pub height: uint32,
-    
+    pub height: u32,
+
     /// Block weight
     pub weight: String,
-    
+
     /// Block header hash (hex string for serialization)
     pub header_hash: String,
-    
+
     /// Block timestamp (optional)
-    pub timestamp: Option<uint32>,
-    
+    pub timestamp: Option<u32>,
+
     /// Coin additions (new coins created)
     pub coin_additions: Vec<CoinInfo>,
-    
+
     /// Coin removals (coins spent)
     pub coin_removals: Vec<CoinInfo>,
-    
+
     /// Detailed coin spends (if generator present)
     pub coin_spends: Vec<CoinSpendInfo>,
-    
+
     /// Coins created by spends (if generator present)
     pub coin_creations: Vec<CoinInfo>,
-    
+
     /// Whether block has transactions generator
     pub has_transactions_generator: bool,
-    
+
     /// Generator size in bytes
-    pub generator_size: Option<uint32>,
-    
-    /// Generator bytecode as hex
-    pub generator_bytecode: Option<String>,
-    
+    pub generator_size: Option<u32>,
+
     /// Generator block info (if present)
     pub generator_info: Option<GeneratorBlockInfo>,
 }
@@ -63,10 +60,10 @@ pub struct ParsedBlock {
 pub struct CoinInfo {
     /// Parent coin info (32 bytes as hex)
     pub parent_coin_info: String,
-    
+
     /// Puzzle hash (32 bytes as hex)
     pub puzzle_hash: String,
-    
+
     /// Amount in mojos
     pub amount: uint64,
 }
@@ -79,7 +76,7 @@ impl CoinInfo {
             amount,
         }
     }
-    
+
     /// Create from raw bytes
     pub fn from_bytes(parent_coin_info: &[u8], puzzle_hash: &[u8], amount: uint64) -> Self {
         Self {
@@ -129,10 +126,10 @@ impl CoinSpendInfo {
 pub struct GeneratorBlockInfo {
     /// Previous block header hash
     pub prev_header_hash: Hash32,
-    
+
     /// The transactions generator program (CLVM bytecode)
     pub transactions_generator: Option<SerializedProgram>,
-    
+
     /// List of block heights that this generator references
     pub transactions_generator_ref_list: Vec<BlockHeight>,
 }
@@ -149,18 +146,18 @@ impl GeneratorBlockInfo {
             transactions_generator_ref_list,
         }
     }
-    
+
     pub fn has_generator(&self) -> bool {
         self.transactions_generator.is_some()
     }
-    
+
     pub fn generator_size(&self) -> usize {
         self.transactions_generator
             .as_ref()
             .map(|g| g.len())
             .unwrap_or(0)
     }
-    
+
     pub fn ref_list_size(&self) -> usize {
         self.transactions_generator_ref_list.len()
     }
@@ -188,7 +185,10 @@ impl Serialize for GeneratorBlockInfo {
         let mut state = serializer.serialize_struct("GeneratorBlockInfo", 3)?;
         state.serialize_field("prev_header_hash", &hex::encode(self.prev_header_hash))?;
         state.serialize_field("transactions_generator", &self.transactions_generator)?;
-        state.serialize_field("transactions_generator_ref_list", &self.transactions_generator_ref_list)?;
+        state.serialize_field(
+            "transactions_generator_ref_list",
+            &self.transactions_generator_ref_list,
+        )?;
         state.end()
     }
 }
@@ -208,10 +208,10 @@ impl<'de> Deserialize<'de> for GeneratorBlockInfo {
 pub struct ParsedGenerator {
     /// The generator block information
     pub block_info: GeneratorBlockInfo,
-    
+
     /// Raw generator bytecode as hex string
     pub generator_hex: Option<String>,
-    
+
     /// Analysis information
     pub analysis: GeneratorAnalysis,
 }
@@ -221,16 +221,16 @@ pub struct ParsedGenerator {
 pub struct GeneratorAnalysis {
     /// Size of the generator in bytes
     pub size_bytes: usize,
-    
+
     /// Whether the generator is empty
     pub is_empty: bool,
-    
+
     /// Whether it contains CLVM patterns
     pub contains_clvm_patterns: bool,
-    
+
     /// Whether it contains coin patterns
     pub contains_coin_patterns: bool,
-    
+
     /// Entropy of the bytecode
     pub entropy: f64,
 }
@@ -240,7 +240,7 @@ pub struct GeneratorAnalysis {
 pub struct BlockHeightInfo {
     /// Block height
     pub height: uint32,
-    
+
     /// Whether this is a transaction block
     pub is_transaction_block: bool,
 }
@@ -252,4 +252,4 @@ impl BlockHeightInfo {
             is_transaction_block,
         }
     }
-} 
+}

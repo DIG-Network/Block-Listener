@@ -1,97 +1,58 @@
 # Project Architecture Index
 
-## Module Hierarchy
+## Module Structure
 
-### Core Rust Implementation
-- **`src/lib.rs`** - Library entry point
-- **`src/event_emitter.rs`** - Main event handling and CLVM parsing logic
-- **`src/peer.rs`** - Peer connection management
-- **`src/protocol.rs`** - Chia network protocol implementation
-- **`src/tls.rs`** - TLS connection handling
-- **`src/error.rs`** - Error handling types
+### Core Components
+- `src/event_emitter.rs` - Main NAPI interface and event system
+  - ChiaBlockListener class
+  - Event handling (on/off methods)
+  - Peer management (addPeer, disconnectPeer, etc.)
+  - Block retrieval APIs
 
-### Node.js Bindings
-- **`index.js`** - JavaScript entry point
-- **`index.d.ts`** - TypeScript type definitions
-- **`build.rs`** - Rust build configuration
+- `src/peer.rs` - WebSocket peer connection management
+  - Connection handling
+  - Block listening
+  - Handshake protocol
 
-### Examples and Testing
-- **`examples/coin-monitor.js`** - Example usage demonstrating CLVM parsing
-- **`__test__/index.test.mjs`** - Test suite
+- `src/protocol.rs` - Chia protocol implementation
+  - Message types
+  - Handshake structures
 
-### Build System
-- **`package.json`** - Node.js package configuration
-- **`Cargo.toml`** - Rust package configuration
-- **`scripts/post-build.js`** - Build post-processing
+### Parser Module (`crate/chia-generator-parser/`)
+- `src/parser.rs` - Block parsing with CLVM execution
+  - Uses chia-consensus for generator execution
+  - Extracts coin spends with puzzle reveals/solutions
+  - Handles CREATE_COIN conditions
 
-## System Components
+### TypeScript Integration
+- `index.d.ts` - Auto-generated TypeScript definitions
+  - Enhanced with typed event overloads via post-build script
+  - Full IntelliSense support for event handlers
 
-### 1. ChiaBlockListener (Main Interface)
-- **Location**: `src/event_emitter.rs`
-- **Purpose**: Primary API for blockchain monitoring
-- **Key Methods**:
-  - `add_peer()` - Connect to Chia peers
-  - `on()/off()` - Event handling
-  - `process_transaction_generator()` - **FIXED** CLVM parsing
-  - `get_block_by_height()` - Block retrieval
+- `scripts/post-build.js` - Adds typed event method overloads
+  - Runs automatically after build
+  - Provides type-safe event handling
 
-### 2. Transaction Generator Processing ✅ FIXED
-- **Location**: `src/event_emitter.rs:execute_transaction_generator`
-- **Purpose**: Parse and execute CLVM transaction generators
-- **Key Function**: `process_transaction_generator()`
-- **Input**: Hex-encoded transaction generator bytecode
-- **Output**: Extracted coin spends with puzzle reveals and solutions
-- **Implementation**: Uses `clvmr::serde::node_from_bytes` + `run_program`
+## Key Interfaces
 
-### 3. Event System
-- **Location**: `src/event_emitter.rs`
-- **Events**:
-  - `blockReceived` - New block notifications
-  - `peerConnected` - Peer connection events
-  - `peerDisconnected` - Peer disconnection events
+### Events
+- `BlockReceivedEvent` - Contains peerId + all block data
+- `PeerConnectedEvent` - peerId, host, port
+- `PeerDisconnectedEvent` - peerId, host, port, optional message
 
-### 4. Protocol Layer
-- **Location**: `src/protocol.rs`, `src/peer.rs`
-- **Purpose**: Chia network protocol implementation
-- **Features**: Handshake, message serialization, peer management
+### Data Types  
+- `BlockReceivedEvent` - Used everywhere for consistency (includes peerId)
+- `CoinRecord` - Parent info, puzzle hash, amount
+- `CoinSpend` - Full spend with puzzle reveal and solution
 
-## Key Interfaces/APIs
+## Event System
+```typescript
+// Typed event handlers
+listener.on('blockReceived', (event: BlockReceivedEvent) => { });
+listener.on('peerConnected', (event: PeerConnectedEvent) => { });
+listener.on('peerDisconnected', (event: PeerDisconnectedEvent) => { });
+```
 
-### Rust Types
-- **`BlockEvent`** - Block data structure
-- **`TransactionGeneratorResult`** - CLVM parsing results
-- **`CoinSpend`** - Parsed coin spend data
-- **`CoinRecord`** - Coin information
-
-### TypeScript Types
-- **`ChiaBlockListener`** - Main class interface
-- **`Block`** - Block data structure
-- **`TransactionGeneratorResult`** - CLVM parsing results
-- **`CoinSpend`** - Coin spend data
-
-## Dependencies Between Modules
-
-### Core Dependencies
-- `clvmr` → CLVM runtime execution
-- `chia-protocol` → Chia blockchain types
-- `clvm-traits` → CLVM serialization
-- `napi` → Node.js bindings
-
-### Internal Dependencies
-- `event_emitter` → `peer` (peer management)
-- `event_emitter` → `protocol` (message handling)
-- `event_emitter` → `tls` (secure connections)
-- `examples` → `index.js` (API usage)
-
-## Recent Architecture Changes
-
-### CLVM Parsing Fix ✅
-- **Before**: Used incorrect `chia_protocol::Program::from()` 
-- **After**: Uses `clvmr::serde::node_from_bytes` directly
-- **Impact**: Proper transaction generator parsing
-- **Files Modified**: `src/event_emitter.rs`
-
-### Code Quality
-- **Status**: 19 build warnings (unused imports/functions)
-- **Impact**: No functional issues, cleanup needed
-- **Priority**: Low (maintenance) 
+## Peer Identification
+- Peer IDs are now `"IP:port"` strings (e.g., `"192.168.1.100:8444"`)
+- Makes peer identification clearer in logs and events 

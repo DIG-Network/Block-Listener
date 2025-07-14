@@ -17,20 +17,30 @@
 - Eliminated manual byte parsing and redundant serialization
 - Built and tested with real network connections
 - Created real-time block monitor (coin-monitor.js)
-- Discovered coin_spends not being extracted for real-time blocks
+- **FIXED: Implemented full CLVM execution using chia-consensus**
+- **FIXED: TypeScript definitions now include all event types**
 
-## Critical Issue
-- **Real-time blocks have empty coin_spends arrays** even when generator_bytecode is present
-- Pattern matching in parser returns placeholder data
-- No actual CLVM execution implemented
-- Missing 99%+ of blockchain data (puzzle reveals, solutions, conditions)
+## Completed Implementations
+- Full CLVM execution using run_block_generator2 for coin extraction
+- Real puzzle reveals and solutions from generator bytecode
+- Proper TypeScript event type definitions with constants
+- Event interfaces for PeerConnected, PeerDisconnected, BlockReceived
+- Removed generatorBytecode from block events (not needed)
+- Log file streaming for coin-monitor.js
+- Removed processTransactionGenerator method (replaced by chia-generator-parser)
+- Changed peer IDs from numeric to IP:port strings for better identification
+- Added typed event emitters with full TypeScript support via post-build script
+- Removed redundant Block type - all APIs now use BlockReceivedEvent consistently
 
 ## Dependencies
 - chia-protocol = "0.26.0"
 - chia-traits = "0.26.0"  
 - chia-ssl = "0.26.0"
-- clvmr = "0.8.0" (added but not used)
-- Need chia_rs for proper CLVM execution
+- chia-consensus = "0.26.0" (for CLVM execution)
+- chia-bls = "0.26.0" (for signature handling)
+- clvmr = "0.8.0" (for low-level CLVM operations)
+- clvm-utils = "0.26.0" (for tree hashing)
+- hex = "0.4" (for hex encoding/decoding)
 
 ## Testing
 - example-get-block-by-height.js: Requests specific blocks

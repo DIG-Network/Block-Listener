@@ -133,5 +133,9 @@ Thumbs.db
 logs
 *.log
 
+# Coin monitor logs
+examples/coin-monitor-*.log
+
 # Artifacts
 artifacts/
+chia-block-listener.win32-x64-msvc.node

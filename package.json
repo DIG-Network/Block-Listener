@@ -1,6 +1,6 @@
 {
   "name": "@dignetwork/chia-block-listener",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "main": "index.js",
   "types": "index.d.ts",
   "repository": {
@@ -34,12 +34,14 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
+    "build": "napi build --platform --release && node scripts/post-build.js",
     "build:debug": "napi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava",
     "universal": "napi universal",
     "version": "napi version",
+    "bump": "node scripts/bump-version.js",
+    "bump:dry": "node scripts/bump-version.js --dry-run",
     "deps:check": "cargo machete",
     "deps:fix": "cargo machete --fix",
     "deps:clean": "cargo remove chia-consensus chia-puzzle-types chia-puzzles clvm-utils clvm_tools_rs",
