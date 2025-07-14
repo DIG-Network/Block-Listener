@@ -93,25 +93,12 @@ impl CoinInfo {
 /// Detailed coin spend information extracted from generator
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinSpendInfo {
-    /// The coin being spent
     pub coin: CoinInfo,
-    
-    /// Puzzle reveal (CLVM program)
     pub puzzle_reveal: Vec<u8>,
-    
-    /// Solution (CLVM program)
     pub solution: Vec<u8>,
-    
-    /// Whether this is real data (not heuristic)
     pub real_data: bool,
-    
-    /// Parsing method used
     pub parsing_method: String,
-    
-    /// Offset in generator bytecode
-    pub offset: uint32,
-    
-    /// Coins created by this spend
+    pub offset: u32,
     pub created_coins: Vec<CoinInfo>,
 }
 

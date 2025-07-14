@@ -1,72 +1,38 @@
-# Project Context
+# Chia Block Listener Project Context
 
-## Current Status
-- **Architecture**: Complete refactor with dedicated chia-generator-parser crate ✅
-- **Block Parsing**: Using chia-protocol FullBlock types directly ✅
-- **Build Status**: Successfully building without errors ✅
-- **Generator Parsing**: ❌ NOT PRODUCTION READY - placeholder pattern matching
-- **CLVM Integration**: ❌ NOT PRODUCTION READY - no execution capability
-
-## Production Readiness: ❌ CRITICAL ISSUES
-After implementing chia-protocol integration:
-1. **No CLVM Execution**: Cannot run generators to extract coins
-2. **No SpendBundleConditions**: Missing the core data structure from run_block_generator2
-3. **Pattern Matching Only**: Looking for 0x33 bytes instead of executing CLVM
-4. **No Generator Refs**: Cannot handle compressed blocks
-5. **Incomplete Header**: Minor issue with header block creation
-
-**Impact**: Will miss 99%+ of all coins and report incorrect blockchain state
-
-## Recent Progress (2024-12-30)
-1. **Fixed all compilation errors** in chia-generator-parser
-2. **Refactored to use chia-protocol types directly** - no more manual byte parsing
-3. **Eliminated redundant serialization** - working with FullBlock structs
-4. **Aligned all dependencies** to version 0.26.0
-5. **Successfully integrated** parser with main event flow
-6. **Added IPv6 support** for peer connections
-7. **Tested end-to-end** with real network connection
-8. **Documented CLVM execution** in .knowledge/reference/clvm_execution.md
-9. **Added basic CLVM parsing** using clvmr library
-10. **Created implementation audit** comparing with Python
-11. **Triple-checked coin extraction** - confirmed NOT working
+## Current State
+- Rust-based WebSocket client connecting to Chia full nodes
+- Uses NAPI for Node.js bindings
+- Integrated chia-generator-parser crate for block parsing
+- Can monitor real-time blocks but coin_spends extraction not working
 
 ## Architecture
-The improved architecture now follows:
-```
-Network → peer.rs (receives FullBlock) → chia-generator-parser (processes FullBlock directly) → ParsedBlock → event_emitter.rs → JavaScript
-```
+- `src/peer.rs`: WebSocket connection and block handling
+- `src/event_emitter.rs`: NAPI bindings and JS event system
+- `crate/chia-generator-parser/`: Block parsing using chia-protocol types
+- Direct integration with chia-protocol crate (v0.26.0)
 
-## Key Improvements Made
-- **Direct Type Usage**: Now using `chia_protocol::FullBlock` directly instead of manual parsing
-- **Type Safety**: Leveraging Rust's type system with proper chia-protocol structs
-- **No Redundant Conversion**: Eliminated `to_bytes()` → parse cycle
-- **Dependency Alignment**: All chia crates use consistent versions (0.26.0)
+## Recent Progress
+- Successfully refactored to use chia-protocol types directly
+- Eliminated manual byte parsing and redundant serialization
+- Built and tested with real network connections
+- Created real-time block monitor (coin-monitor.js)
+- Discovered coin_spends not being extracted for real-time blocks
 
-## Key Data Structures
-- **FullBlock**: From chia-protocol, the complete block structure
-- **ParsedBlock**: Our simplified representation for JavaScript consumption
-- **CoinInfo**: Basic coin representation (parent, puzzle_hash, amount)
-- **CoinSpendInfo**: Should contain puzzle reveals and solutions (currently placeholder)
-- **GeneratorBlockInfo**: Generator with reference list (refs not used)
+## Critical Issue
+- **Real-time blocks have empty coin_spends arrays** even when generator_bytecode is present
+- Pattern matching in parser returns placeholder data
+- No actual CLVM execution implemented
+- Missing 99%+ of blockchain data (puzzle reveals, solutions, conditions)
 
-## Critical Path to Production
-1. Add chia_rs dependency properly
-2. Implement proper process_generator_for_coins using run_block_generator2
-3. Extract real SpendBundleConditions
-4. Process conditions to get actual coins
-5. Handle generator references for compressed blocks
-
-## Dependencies Used
-- **chia-protocol**: 0.26.0 - For blockchain data structures
-- **chia-traits**: 0.26.0 - For Streamable serialization trait
-- **clvmr**: 0.14.0 - For CLVM parsing (not execution)
-- **clvm-traits**: 0.26.0 - CLVM type traits
-- **clvm-utils**: 0.26.0 - CLVM utilities
+## Dependencies
+- chia-protocol = "0.26.0"
+- chia-traits = "0.26.0"  
+- chia-ssl = "0.26.0"
+- clvmr = "0.8.0" (added but not used)
+- Need chia_rs for proper CLVM execution
 
 ## Testing
-- Basic block parsing: ✅ Working
-- Network connection: ✅ Working
-- chia-protocol integration: ✅ Working
-- Coin extraction: ❌ Not working (placeholder only)
-- Generator execution: ❌ Not implemented
-- Production blocks: ❌ Will fail to extract coins 
+- example-get-block-by-height.js: Requests specific blocks
+- coin-monitor.js: Monitors real-time blocks
+- Both show generator_bytecode but empty coin_spends 

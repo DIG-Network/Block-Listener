@@ -1,214 +1,149 @@
-const { ChiaBlockListener } = require('../');
+const { ChiaBlockListener, initTracing } = require('../index.js');
+const dns = require('dns').promises;
 
-const listener = new ChiaBlockListener();
+// DNS introducers for peer discovery
+const MAINNET_DNS_INTRODUCERS = [
+  "dns-introducer.chia.net",
+  "chia.ctrlaltdel.ch", 
+  "seeder.dexie.space",
+  "chia.hoffmang.com"
+];
 
-// Add peer
-const peerId = listener.addPeer('node.chia.net', 8444, 'mainnet');
-console.log(`Connected to peer ${peerId}`);
+const TESTNET11_DNS_INTRODUCERS = [
+  "dns-introducer-testnet11.chia.net"
+];
 
-// Function to format coin info
-function formatCoinInfo(coin, index, type) {
-    const amountInXCH = parseFloat(coin.amount) / 1e12;
-    let result = `${type} ${index + 1}:
-  Parent Coin Info: ${coin.parent_coin_info}
-  Puzzle Hash: ${coin.puzzle_hash}
-  Amount: ${coin.amount} mojos (${amountInXCH.toFixed(12)} XCH)`;
-    
-    // Only coin removals (coins being spent) have solutions and reveals
-    // Coin additions (newly created coins) don't have them yet
-    if (type === 'Removal') {
-        result += `
-  Solution: (extracted from transaction generator)
-  Reveal: (extracted from transaction generator)`;
-    } else {
-        result += `
-  Status: Newly created coin (no solution/reveal until spent)`;
+const MAINNET_DEFAULT_PORT = 8444;
+const TESTNET11_DEFAULT_PORT = 58444;
+
+// Shuffle array for randomness
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-    
-    return result;
+  return shuffled;
 }
 
-// Listen for blocks
-listener.on('blockReceived', async (block) => {
-    console.log('\n=== BLOCK RECEIVED ===');
-    console.log(`Height: ${block.height}`);
-    console.log(`Header Hash: ${block.header_hash}`);
-    console.log(`Timestamp: ${block.timestamp}`);
-    console.log(`Peer ID: ${block.peerId}`);
-    console.log(`Weight: ${block.weight}`);
-    console.log(`Has Transaction Generator: ${block.has_transactions_generator}`);
-    console.log(`Generator Size: ${block.generator_size}`);
-    
-    if (block.has_transactions_generator && block.generator_bytecode) {
-        console.log(`Generator Bytecode Length: ${block.generator_bytecode.length}`);
-        console.log(`Generator Bytecode (first 100 chars): ${block.generator_bytecode.substring(0, 100)}...`);
-        
-        // Process the transaction generator to extract coin spends
-        try {
-            const generatorResult = listener.processTransactionGenerator(block.generator_bytecode);
-            console.log(`\n=== TRANSACTION GENERATOR RESULT ===`);
-            console.log(`Success: ${generatorResult.success}`);
-            console.log(`Extracted Spends: ${generatorResult.extractedSpends}`);
-            console.log(`Generator Hex: ${generatorResult.generatorHex ? generatorResult.generatorHex.substring(0, 50) + '...' : 'N/A'}`);
-            
-            if (generatorResult.coinSpends && Array.isArray(generatorResult.coinSpends)) {
-                console.log(`Coin Spends Found: ${generatorResult.coinSpends.length}`);
-                
-                // Show parsing method breakdown
-                const methodCounts = {};
-                generatorResult.coinSpends.forEach(spend => {
-                    methodCounts[spend.parsingMethod] = (methodCounts[spend.parsingMethod] || 0) + 1;
-                });
-                console.log(`Parsing methods used:`, methodCounts);
-                
-                // Try to correlate extracted spends with actual coin removals
-                const coinRemovals = block.coin_removals || [];
-                console.log(`\n🔍 CORRELATION ANALYSIS:`);
-                console.log(`   Coin Removals (actual): ${coinRemovals.length}`);
-                console.log(`   Coin Spends (extracted): ${generatorResult.coinSpends.length}`);
-                
-                if (coinRemovals.length > 0) {
-                    console.log(`\n=== TRYING TO MATCH COIN REMOVALS WITH EXTRACTED SPENDS ===`);
-                    
-                    // Try to find spends that match our coin removals
-                    const matchedSpends = [];
-                    coinRemovals.forEach((removal, index) => {
-                        console.log(`\n🔍 Looking for spend matching Removal ${index + 1}:`);
-                        console.log(`   Parent: ${removal.parent_coin_info}`);
-                        console.log(`   Puzzle Hash: ${removal.puzzle_hash}`);
-                        console.log(`   Amount: ${removal.amount}`);
-                        
-                        // Look for spends with matching data
-                        const possibleMatches = generatorResult.coinSpends.filter(spend => {
-                            return spend.coin.parentCoinInfo === removal.parent_coin_info ||
-                                   spend.coin.puzzleHash === removal.puzzle_hash ||
-                                   spend.coin.amount === removal.amount;
-                        });
-                        
-                        if (possibleMatches.length > 0) {
-                            console.log(`   ✅ Found ${possibleMatches.length} possible matches:`);
-                            possibleMatches.slice(0, 2).forEach((match, i) => {
-                                console.log(`      Match ${i + 1}: Parent=${match.coin.parentCoinInfo}, Hash=${match.coin.puzzleHash}, Amount=${match.coin.amount}`);
-                                console.log(`                 Method=${match.parsingMethod}, Reveal=${match.puzzleReveal.length}chars, Solution=${match.solution.length}chars`);
-                                if (i === 0) matchedSpends.push({removal, spend: match});
-                            });
-                        } else {
-                            console.log(`   ❌ No matching spends found`);
+// Discover peers using DNS introducers
+async function discoverPeers(networkId = 'mainnet') {
+  const introducers = networkId === 'mainnet' ? MAINNET_DNS_INTRODUCERS : TESTNET11_DNS_INTRODUCERS;
+  const defaultPort = networkId === 'mainnet' ? MAINNET_DEFAULT_PORT : TESTNET11_DEFAULT_PORT;
+
+  console.log(`🔍 Discovering peers for ${networkId}...`);
+  
+  let allAddresses = [];
+  
+  // Resolve all introducers to IP addresses
+  for (const introducer of introducers) {
+    try {
+      console.log(`  Resolving ${introducer}...`);
+      const addresses = await dns.lookup(introducer, { all: true });
+      for (const addr of addresses) {
+        // Store the address with family information for proper handling
+        allAddresses.push({ 
+          host: addr.address, 
+          port: defaultPort,
+          family: addr.family // 4 for IPv4, 6 for IPv6
+        });
+      }
+    } catch (error) {
+      console.log(`  Failed to resolve ${introducer}: ${error.message}`);
                         }
-                    });
-                    
-                    if (matchedSpends.length > 0) {
-                        console.log(`\n🎯 === MATCHED COIN REMOVALS WITH PUZZLE DATA ===`);
-                        matchedSpends.forEach(({removal, spend}, index) => {
-                            console.log(`\n💎 Matched Spend ${index + 1}:`);
-                            console.log(`   🔗 Parent Coin Info: ${removal.parent_coin_info}`);
-                            console.log(`   🧩 Puzzle Hash: ${removal.puzzle_hash}`);
-                            console.log(`   💰 Amount: ${removal.amount} mojos`);
-                            console.log(`   📝 Puzzle Reveal: ${spend.puzzleReveal.substring(0, 100)}...`);
-                            console.log(`   🔧 Solution: ${spend.solution.substring(0, 100)}...`);
-                            console.log(`   ⚙️ Parsing Method: ${spend.parsingMethod}`);
-                            console.log(`   ✅ Real Data: ${spend.realData}`);
-                        });
-                    }
-                } else {
-                    console.log(`   ℹ️  No coin removals to correlate with`);
-                }
-                
-                if (generatorResult.coinSpends.length > 0) {
-                    console.log(`\n=== SAMPLE OF ALL EXTRACTED SPENDS (showing parsing quality) ===`);
-                    generatorResult.coinSpends.slice(0, 3).forEach((spend, index) => {
-                        console.log(`\nExtracted Spend ${index + 1}:`);
-                        console.log(`  Parent Coin Info: ${spend.coin.parentCoinInfo}`);
-                        console.log(`  Puzzle Hash: ${spend.coin.puzzleHash}`);
-                        console.log(`  Amount: ${spend.coin.amount} mojos`);
-                        console.log(`  Parsing Method: ${spend.parsingMethod}`);
-                        console.log(`  Real Data: ${spend.realData}`);
-                        console.log(`  Reveal Length: ${spend.puzzleReveal.length}, Solution Length: ${spend.solution.length}`);
-      });
-    } else {
-                    console.log(`No coin spends found in generator result`);
-                }
-            } else {
-                console.log(`Coin spends field is missing or invalid: ${typeof generatorResult.coinSpends}`);
-                console.log(`Available fields:`, Object.keys(generatorResult));
-            }
+  }
+
+  if (allAddresses.length === 0) {
+    throw new Error('Failed to resolve any peer addresses from introducers');
+  }
+
+  // Shuffle for randomness
+  allAddresses = shuffleArray(allAddresses);
+  console.log(`  Found ${allAddresses.length} potential peers (IPv4 and IPv6)`);
+  
+  return allAddresses;
+}
+
+// Format address for display (IPv6 needs brackets in URLs)
+function formatAddress(host, port, family) {
+  if (family === 6) {
+    return `[${host}]:${port}`;
+  }
+  return `${host}:${port}`;
+}
+
+// Try to connect to peers until one succeeds
+async function connectToAnyPeer(listener, networkId = 'mainnet', maxAttempts = 10) {
+  const peers = await discoverPeers(networkId);
+  
+  console.log(`🔌 Attempting to connect to peers (max ${maxAttempts} attempts)...`);
+  
+  for (let i = 0; i < Math.min(peers.length, maxAttempts); i++) {
+    const peer = peers[i];
+    const displayAddress = formatAddress(peer.host, peer.port, peer.family);
+    console.log(`  Trying ${displayAddress}...`);
+    
+    try {
+      const peerId = listener.addPeer(peer.host, peer.port, networkId);
+      console.log(`  ✅ Successfully added peer ${peerId} (${displayAddress})`);
+      return peerId;
         } catch (error) {
-            console.error('Error processing transaction generator:', error.message);
+      console.log(`  ❌ Failed to add peer ${displayAddress}: ${error.message}`);
         }
     }
     
-    // Get coin spends separately using wallet protocol (for removed coins only)
-    if (block.coin_removals && block.coin_removals.length > 0) {
-        console.log(`\n=== GETTING COIN SPENDS VIA WALLET PROTOCOL ===`);
-        console.log(`Note: Requesting puzzle reveals & solutions for ${block.coin_removals.length} removed coins`);
-        
-        try {
-            const coinSpends = await listener.getCoinSpendsForBlock(block.peerId, block.height, block.header_hash);
-            
-            if (coinSpends && coinSpends.length > 0) {
-                console.log(`\n=== COIN SPENDS VIA WALLET PROTOCOL (${coinSpends.length}) ===`);
-                console.log(`Note: These represent coins being SPENT (removed) with their puzzle reveals & solutions`);
-                
-                coinSpends.slice(0, 3).forEach((spend, index) => {
-                    console.log(`\nWallet Protocol Spend ${index + 1}:`);
-                    console.log(`  Parent Coin Info: ${spend.coin.parent_coin_info}`);
-                    console.log(`  Puzzle Hash: ${spend.coin.puzzle_hash}`);
-                    console.log(`  Amount: ${spend.coin.amount} mojos`);
-                    console.log(`  Puzzle Reveal: ${spend.puzzle_reveal.substring(0, 100)}...`);
-                    console.log(`  Solution: ${spend.solution.substring(0, 100)}...`);
-                    console.log(`  Real Data: ${spend.real_data}`);
-                    console.log(`  Parsing Method: ${spend.parsing_method}`);
-                    console.log(`  Offset: ${spend.offset}`);
-                });
-                
-                // Update correlation analysis with wallet protocol spends
-                console.log(`\n🔍 WALLET PROTOCOL CORRELATION:`);
-                console.log(`   Coin Removals (wallet protocol): ${block.coin_removals.length}`);
-                console.log(`   Coin Spends (wallet protocol): ${coinSpends.length}`);
-                
-                if (coinSpends.length === block.coin_removals.length) {
-                    console.log(`   ✅ Perfect match! All removals have corresponding spends`);
-                } else if (coinSpends.length > block.coin_removals.length) {
-                    console.log(`   ✨ More spends than removals (${coinSpends.length - block.coin_removals.length} ephemeral coins)`);
-                } else {
-                    console.log(`   ⚠️  Fewer spends than removals (${block.coin_removals.length - coinSpends.length} missing)`);
-                }
-            } else {
-                console.log(`\n❌ No coin spends returned from wallet protocol`);
-            }
-        } catch (error) {
-            console.error(`\n❌ Error getting coin spends via wallet protocol:`, error.message);
-        }
-    }
-    
-    const coinAdditions = block.coin_additions || [];
-    const coinRemovals = block.coin_removals || [];
-    
-    console.log(`\n=== COIN ADDITIONS (${coinAdditions.length}) ===`);
-    console.log(`Note: These are newly created coins (outputs) - no puzzle reveals/solutions until spent`);
-    coinAdditions.slice(0, 2).forEach((coin, index) => {
-        console.log(formatCoinInfo(coin, index, 'Addition'));
+  throw new Error(`Failed to connect to any of the ${maxAttempts} attempted peers`);
+}
+
+async function main() {
+  // Initialize logging
+  initTracing();
+
+  // Create a new block listener
+  const listener = new ChiaBlockListener();
+
+  try {
+    // Set up event listeners
+    listener.on('peerConnected', (event) => {
+      console.log(`✅ Peer ${event.peerId} connected: ${event.host}:${event.port}`);
+      console.log(`🔊 Listening for real-time blocks...`);
     });
-    
-    console.log(`\n=== COIN REMOVALS (${coinRemovals.length}) ===`);
-    console.log(`Note: These are coins being spent (inputs) - puzzle reveals/solutions extracted from generator`);
-    coinRemovals.slice(0, 2).forEach((coin, index) => {
-        console.log(formatCoinInfo(coin, index, 'Removal'));
+
+    listener.on('peerDisconnected', (event) => {
+      console.log(`❌ Peer ${event.peerId} disconnected: ${event.host}:${event.port}`);
+      if (event.message) console.log(`   Reason: ${event.message}`);
     });
+
+    // Log every block as it's received
+    listener.on('blockReceived', (event) => {
+      console.log('\n📦 Real-time Block Event:');
+      console.log(JSON.stringify(event, null, 2));
+      console.log('\n' + '='.repeat(80) + '\n');
+});
+
+    // Connect to a peer
+    const networkId = 'mainnet';
+    const peerId = await connectToAnyPeer(listener, networkId);
     
-    console.log('\n' + '='.repeat(50));
-});
+    console.log(`\n🚀 Successfully connected to peer ${peerId} on ${networkId}`);
+    console.log('Monitoring real-time blocks...');
+    console.log('Press Ctrl+C to stop\n');
 
-// Listen for peer events
-listener.on('peerConnected', (peer) => {
-    console.log(`Peer connected: ${peer.host}:${peer.port} (ID: ${peer.peer_id})`);
-});
+    // Handle graceful shutdown
+    process.on('SIGINT', () => {
+      console.log('\nShutting down...');
+      listener.disconnectAllPeers();
+      process.exit(0);
+    });
 
-listener.on('peerDisconnected', (peer) => {
-    console.log(`Peer disconnected: ${peer.host}:${peer.port} (ID: ${peer.peer_id})`);
-    if (peer.message) {
-        console.log(`Reason: ${peer.message}`);
+    // Keep the process running
+    await new Promise(() => {});
+
+  } catch (error) {
+    console.error('Error:', error);
+    process.exit(1);
     }
-});
+}
 
-console.log('Block listener started. Waiting for blocks...'); 
+// Run the monitor
+main().catch(console.error); 

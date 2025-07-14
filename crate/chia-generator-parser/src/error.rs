@@ -14,6 +14,9 @@ pub enum GeneratorParserError {
     #[error("CLVM parsing error: {0}")]
     ClvmParsingError(String),
     
+    #[error("CLVM execution error: {0}")]
+    ClvmExecutionError(String),
+    
     #[error("Serialization error: {0}")]
     SerializationError(String),
     
