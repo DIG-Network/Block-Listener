@@ -53,20 +53,19 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: napi build --platform --release --target x86_64-apple-darwin && node scripts/post-build.js
+            build: npm run build -- --target x86_64-apple-darwin && node scripts/post-build.js
           - host: windows-latest
-            build: napi build --platform --release --target x86_64-pc-windows-msvc && node scripts/post-build.js
+            build: npm run build -- --target x86_64-pc-windows-msvc && node scripts/post-build.js
             target: x86_64-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             build: |
               set -e && 
-              napi build --platform --release --target x86_64-unknown-linux-gnu &&
-              node scripts/post-build.js &&
+              npm run build -- --target x86_64-unknown-linux-gnu && node scripts/post-build.js &&
               strip *.node
-          - host: macos-latest
-            target: aarch64-apple-darwin
-            build: napi build --platform --release --target aarch64-apple-darwin && node scripts/post-build.js
+          - host: macos-latest  
+            target: aarch64-apple-darwin  
+            build: npm run build -- --target aarch64-apple-darwin && node scripts/post-build.js
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             setup: |
@@ -75,8 +74,7 @@ jobs:
             build: |
               set -e &&
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc &&
-              napi build --platform --release --target aarch64-unknown-linux-gnu &&
-              node scripts/post-build.js
+              npm run build -- --target aarch64-unknown-linux-gnu && node scripts/post-build.js
     name: stable - ${{ matrix.settings.target }} - node@20
     runs-on: ${{ matrix.settings.host }}
     steps:
@@ -176,13 +174,7 @@ jobs:
           name: bindings-${{ matrix.settings.target }}
           path: .
       - name: Move artifacts
-        run: |
-          echo "=== Before artifacts command ==="
-          ls -la
-          echo "=== Running artifacts command ==="
-          npm run artifacts
-          echo "=== After artifacts command ==="
-          ls -la
+        run: npm run artifacts
       - name: List packages
         run: ls -R .
         shell: bash
@@ -215,13 +207,7 @@ jobs:
           name: bindings-x86_64-unknown-linux-gnu
           path: .
       - name: Move artifacts
-        run: |
-          echo "=== Before artifacts command ==="
-          ls -la
-          echo "=== Running artifacts command ==="
-          npm run artifacts
-          echo "=== After artifacts command ==="
-          ls -la
+        run: npm run artifacts
       - name: List packages
         run: ls -R .
         shell: bash
@@ -247,13 +233,7 @@ jobs:
           name: bindings-aarch64-unknown-linux-gnu
           path: .
       - name: Move artifacts
-        run: |
-          echo "=== Before artifacts command ==="
-          ls -la
-          echo "=== Running artifacts command ==="
-          npm run artifacts
-          echo "=== After artifacts command ==="
-          ls -la
+        run: npm run artifacts
       - name: List packages
         run: ls -R .
         shell: bash

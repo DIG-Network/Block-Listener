@@ -36,7 +36,7 @@ impl BlockParser {
     pub fn new() -> Self {
         Self {}
     }
-
+    
     /// Parse a FullBlock directly instead of bytes
     pub fn parse_full_block(&self, block: &FullBlock) -> Result<ParsedBlock> {
         info!(
@@ -372,7 +372,7 @@ impl BlockParser {
 
     /// Extract created coins from spend bundle conditions
     fn extract_created_coins(
-        &self,
+        &self, 
         spend_index: usize,
         spend_bundle_conditions: &SpendBundleConditions,
     ) -> Vec<CoinInfo> {
@@ -439,11 +439,11 @@ impl BlockParser {
             hex::decode(generator_hex).map_err(|e| GeneratorParserError::HexDecodingError(e))?;
         self.parse_generator_from_bytes(&generator_bytes)
     }
-
+    
     /// Parse generator from bytes
     pub fn parse_generator_from_bytes(&self, generator_bytes: &[u8]) -> Result<ParsedGenerator> {
         let analysis = self.analyze_generator(generator_bytes)?;
-
+        
         Ok(ParsedGenerator {
             block_info: GeneratorBlockInfo {
                 prev_header_hash: Bytes32::default(),
@@ -454,7 +454,7 @@ impl BlockParser {
             analysis,
         })
     }
-
+    
     /// Analyze generator bytecode
     pub fn analyze_generator(&self, generator_bytes: &[u8]) -> Result<GeneratorAnalysis> {
         let size_bytes = generator_bytes.len();
@@ -469,7 +469,7 @@ impl BlockParser {
         let contains_coin_patterns = generator_bytes.windows(1).any(|w| w[0] == 0x33);
 
         let entropy = self.calculate_entropy(generator_bytes);
-
+        
         Ok(GeneratorAnalysis {
             size_bytes,
             is_empty,
@@ -478,18 +478,18 @@ impl BlockParser {
             entropy,
         })
     }
-
+    
     /// Calculate Shannon entropy of data
     fn calculate_entropy(&self, data: &[u8]) -> f64 {
         if data.is_empty() {
             return 0.0;
         }
-
+        
         let mut freq = [0u32; 256];
         for &byte in data {
             freq[byte as usize] += 1;
         }
-
+        
         let len = data.len() as f64;
         freq.iter()
             .filter(|&&count| count > 0)
@@ -505,4 +505,4 @@ impl Default for BlockParser {
     fn default() -> Self {
         Self::new()
     }
-}
+} 
