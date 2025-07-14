@@ -173,6 +173,8 @@ jobs:
         with:
           name: bindings-${{ matrix.settings.target }}
           path: .
+      - name: Move artifacts
+        run: npm run artifacts
       - name: List packages
         run: ls -R .
         shell: bash
@@ -204,6 +206,10 @@ jobs:
         with:
           name: bindings-x86_64-unknown-linux-gnu
           path: .
+      - name: Install dependencies
+        run: npm ci
+      - name: Move artifacts
+        run: npm run artifacts
       - name: List packages
         run: ls -R .
         shell: bash
@@ -228,11 +234,13 @@ jobs:
         with:
           name: bindings-aarch64-unknown-linux-gnu
           path: .
+      - name: Install dependencies
+        run: npm ci
+      - name: Move artifacts
+        run: npm run artifacts
       - name: List packages
         run: ls -R .
         shell: bash
-      - name: Install dependencies
-        run: npm ci
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -269,6 +277,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Move artifacts
+        run: npm run artifacts
       - name: List packages
         run: ls -R ./npm
         shell: bash
