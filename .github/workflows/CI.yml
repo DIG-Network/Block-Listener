@@ -123,6 +123,18 @@ jobs:
       - name: Build
         run: ${{ matrix.settings.build }}
         shell: bash
+      - name: List files after build
+        run: |
+          echo "=== Current directory contents ==="
+          ls -la
+          echo "=== Looking for .node files ==="
+          find . -name "*.node" -type f
+          echo "=== Looking for files matching pattern ==="
+          ls -la ${{ env.APP_NAME }}.*.node || echo "No files match the pattern"
+          echo "=== Environment variables ==="
+          echo "APP_NAME: ${{ env.APP_NAME }}"
+          echo "Target: ${{ matrix.settings.target }}"
+        shell: bash
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
