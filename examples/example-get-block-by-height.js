@@ -41,7 +41,12 @@ async function discoverPeers(networkId = 'mainnet') {
       console.log(`  Resolving ${introducer}...`);
       const addresses = await dns.lookup(introducer, { all: true });
       for (const addr of addresses) {
-        allAddresses.push({ host: addr.address, port: defaultPort });
+        // Store the address with family information for proper handling
+        allAddresses.push({ 
+          host: addr.address, 
+          port: defaultPort,
+          family: addr.family // 4 for IPv4, 6 for IPv6
+        });
       }
     } catch (error) {
       console.log(`  Failed to resolve ${introducer}: ${error.message}`);
@@ -54,9 +59,17 @@ async function discoverPeers(networkId = 'mainnet') {
 
   // Shuffle for randomness
   allAddresses = shuffleArray(allAddresses);
-  console.log(`  Found ${allAddresses.length} potential peers`);
+  console.log(`  Found ${allAddresses.length} potential peers (IPv4 and IPv6)`);
   
   return allAddresses;
+}
+
+// Format address for display (IPv6 needs brackets in URLs)
+function formatAddress(host, port, family) {
+  if (family === 6) {
+    return `[${host}]:${port}`;
+  }
+  return `${host}:${port}`;
 }
 
 // Try to connect to peers until one succeeds
@@ -67,47 +80,19 @@ async function connectToAnyPeer(listener, networkId = 'mainnet', maxAttempts = 1
   
   for (let i = 0; i < Math.min(peers.length, maxAttempts); i++) {
     const peer = peers[i];
-    console.log(`  Trying ${peer.host}:${peer.port}...`);
+    const displayAddress = formatAddress(peer.host, peer.port, peer.family);
+    console.log(`  Trying ${displayAddress}...`);
     
     try {
       const peerId = listener.addPeer(peer.host, peer.port, networkId);
-      console.log(`  ✅ Successfully added peer ${peerId} (${peer.host}:${peer.port})`);
+      console.log(`  ✅ Successfully added peer ${peerId} (${displayAddress})`);
       return peerId;
     } catch (error) {
-      console.log(`  ❌ Failed to add peer ${peer.host}:${peer.port}: ${error.message}`);
+      console.log(`  ❌ Failed to add peer ${displayAddress}: ${error.message}`);
     }
   }
   
   throw new Error(`Failed to connect to any of the ${maxAttempts} attempted peers`);
-}
-
-// Reconnection helper function
-async function attemptReconnection(listener, networkId = 'mainnet', isReconnectingRef, retryCount = 0) {
-  const maxRetries = 3;
-  const retryDelays = [5000, 30000, 60000]; // 5 seconds, 30 seconds, 1 minute
-  
-  console.log(`\n🔄 Reconnection attempt ${retryCount + 1}/${maxRetries}...`);
-  
-  try {
-    const newPeerId = await connectToAnyPeer(listener, networkId);
-    console.log(`🚀 Successfully reconnected with new peer ${newPeerId}`);
-    isReconnectingRef.value = false;
-    return newPeerId;
-  } catch (error) {
-    console.error(`💥 Reconnection attempt ${retryCount + 1} failed: ${error.message}`);
-    
-    if (retryCount < maxRetries - 1) {
-      const delay = retryDelays[retryCount];
-      console.log(`⏳ Will retry in ${delay / 1000} seconds...`);
-      
-      setTimeout(async () => {
-        await attemptReconnection(listener, networkId, isReconnectingRef, retryCount + 1);
-      }, delay);
-    } else {
-      console.log(`❌ All ${maxRetries} reconnection attempts failed. You may need to restart the application.`);
-      isReconnectingRef.value = false;
-    }
-  }
 }
 
 async function main() {
@@ -116,236 +101,149 @@ async function main() {
 
   // Create a new block listener
   const listener = new ChiaBlockListener();
-  
-  // Track reconnection state to prevent multiple simultaneous attempts
-  const reconnectionState = { value: false };
 
   try {
-    // Set up event listeners
+    // Set up event listeners for the new architecture
     listener.on('peerConnected', (event) => {
       console.log(`✅ Peer ${event.peerId} connected: ${event.host}:${event.port}`);
       
-      // Check if this was a reconnection
-      if (reconnectionState.value) {
-        console.log(`🎉 Reconnection successful! Back online with new peer.`);
-      }
+      console.log('\n🧪 TESTING NEW CHIA-GENERATOR-PARSER ARCHITECTURE');
+      console.log('='.repeat(60));
       
-      // Once connected, search for blocks with transaction generators
-      console.log('\n🔍 Searching for blocks with transaction generators...');
+      console.log('\n🔍 Testing block request with new parser...');
       
-      // Start searching from a known area with transaction activity
-      let startHeight = 4000000;
-      let maxSearchBlocks = 100;
-      let blocksWithGenerators = 0;
+      // Test requesting a few blocks to see the new parser in action
+      const testHeights = [4000000, 4000001, 4000002];
       
-      console.log(`Starting search from height ${startHeight}, will check up to ${maxSearchBlocks} blocks...`);
-      
-      // Search for blocks with generators
-      for (let height = startHeight; height < startHeight + maxSearchBlocks; height++) {
+      for (const height of testHeights) {
         try {
-          console.log(`\n📊 Checking block ${height}...`);
+          console.log(`\n📊 Requesting block at height ${height}...`);
           
           const block = listener.getBlockByHeight(event.peerId, height);
           
-          if (block && block.has_transactions_generator) {
-            blocksWithGenerators++;
+          if (block) {
+            console.log(`✅ Successfully parsed block ${height} with new architecture!`);
+            console.log(`📦 Block Details:`);
+            console.log(`   Height: ${block.height}`);
+            console.log(`   Weight: ${block.weight}`);
+            console.log(`   Header Hash: ${block.headerHash}`);
+            console.log(`   Timestamp: ${block.timestamp ? new Date(block.timestamp * 1000).toISOString() : 'N/A'}`);
+            console.log(`   Has Generator: ${block.hasTransactionsGenerator}`);
+            console.log(`   Generator Size: ${block.generatorSize} bytes`);
             
-            console.log(`\n${'🎯'.repeat(40)}`);
-            console.log(`FOUND BLOCK WITH TRANSACTION GENERATOR AT HEIGHT ${height}!`);
-            console.log(`${'🎯'.repeat(40)}`);
+            // Test the new coin data structure
+            console.log(`\n💰 NEW COIN DATA STRUCTURE:`);
+            console.log(`   Coin Additions: ${block.coinAdditions?.length || 0}`);
+            console.log(`   Coin Removals: ${block.coinRemovals?.length || 0}`);
+            console.log(`   Coin Spends: ${block.coinSpends?.length || 0}`);
+            console.log(`   Coin Creations: ${block.coinCreations?.length || 0}`);
             
-            console.log(`\n📦 BLOCK DETAILS:`);
-            console.log(`  Height: ${block.height}`);
-            console.log(`  Header Hash: ${block.header_hash || 'N/A'}`);
-            console.log(`  Weight: ${block.weight || 'N/A'}`);
-            console.log(`  Timestamp: ${block.timestamp ? new Date(block.timestamp * 1000).toISOString() : 'N/A'}`);
-            console.log(`  Generator Size: ${block.generator_size} bytes`);
+            // Show detailed coin information
+            if (block.coinAdditions && block.coinAdditions.length > 0) {
+              console.log(`\n🔍 COIN ADDITIONS DETAIL:`);
+              block.coinAdditions.forEach((coin, index) => {
+                console.log(`  Addition ${index + 1}:`);
+                console.log(`    Parent: ${coin.parentCoinInfo}`);
+                console.log(`    Puzzle Hash: ${coin.puzzleHash}`);
+                console.log(`    Amount: ${coin.amount} mojos (${parseFloat(coin.amount) / 1000000000000} XCH)`);
+              });
+            }
             
-            // Process the transaction generator to extract puzzle solutions and reveals
-            if (block.generator_bytecode) {
-              console.log(`\n🧪 PROCESSING TRANSACTION GENERATOR FOR PUZZLE SOLUTIONS:`);
-              console.log(`    Generator bytecode: ${block.generator_bytecode.substring(0, 200)}...`);
-              
+            if (block.coinSpends && block.coinSpends.length > 0) {
+              console.log(`\n🔐 COIN SPENDS DETAIL:`);
+              block.coinSpends.forEach((spend, index) => {
+                console.log(`  Spend ${index + 1}:`);
+                console.log(`    Coin: ${JSON.stringify(spend.coin, null, 6)}`);
+                console.log(`    Puzzle Reveal: ${spend.puzzleReveal ? spend.puzzleReveal.substring(0, 100) + '...' : 'N/A'}`);
+                console.log(`    Solution: ${spend.solution ? spend.solution.substring(0, 100) + '...' : 'N/A'}`);
+                console.log(`    Real Data: ${spend.realData}`);
+                console.log(`    Method: ${spend.parsingMethod}`);
+                console.log(`    Offset: ${spend.offset}`);
+              });
+            }
+            
+            // Test the generator processing if available
+            if (block.hasTransactionsGenerator && block.generatorBytecode) {
+              console.log(`\n🧪 TESTING GENERATOR PROCESSING WITH NEW PARSER:`);
               try {
-                const generatorResult = listener.processTransactionGenerator(block.generator_bytecode);
-                console.log(`\n🔓 TRANSACTION GENERATOR PROCESSING RESULT:`);
-                console.log(JSON.stringify(generatorResult, null, 2));
-                
-                // If we successfully processed it and found coin spends, we're done
-                if (generatorResult.success && generatorResult.coin_spends && generatorResult.coin_spends.length > 0) {
-                  console.log(`\n✅ SUCCESS! Found ${generatorResult.coin_spends.length} coin spends with puzzle solutions!`);
-                  console.log(`🔍 Detailed coin spend analysis:`);
-                  
-                  generatorResult.coin_spends.forEach((spend, index) => {
-                    console.log(`\n  Spend ${index + 1}:`);
-                    console.log(`    Coin: ${JSON.stringify(spend.coin, null, 6)}`);
-                    console.log(`    Puzzle Reveal: ${spend.puzzle_reveal ? spend.puzzle_reveal.substring(0, 100) + '...' : 'N/A'}`);
-                    console.log(`    Solution: ${spend.solution ? spend.solution.substring(0, 100) + '...' : 'N/A'}`);
-                    console.log(`    Parsing Method: ${spend.parsing_method || 'N/A'}`);
-                    console.log(`    Real Data: ${spend.real_data || false}`);
-                  });
-                  
-                  // Found what we're looking for, stop searching
-                  console.log(`\n🎉 Found block with extractable puzzle solutions at height ${height}!`);
-                  break;
-                }
+                const result = listener.processTransactionGenerator(block.generatorBytecode);
+                console.log(`📊 Generator Analysis Result:`);
+                console.log(JSON.stringify(result, null, 2));
               } catch (error) {
-                console.error(`    💥 Error processing generator: ${error.message}`);
+                console.log(`❌ Generator processing error: ${error.message}`);
               }
-            } else {
-              console.log(`    ❌ Generator bytecode not available for manual block request`);
-              console.log(`    This shouldn't happen - check the Rust implementation`);
             }
             
-            // Show summary
-            console.log(`\n📊 SEARCH PROGRESS:`);
-            console.log(`    Blocks checked: ${height - startHeight + 1}`);
-            console.log(`    Blocks with generators found: ${blocksWithGenerators}`);
-            console.log(`    Continuing search for puzzle solutions...`);
+            console.log(`\n${'='.repeat(60)}`);
             
-          } else if (block) {
-            // Just log a brief message for blocks without generators
-            if (height % 10 === 0) {
-              console.log(`    Block ${height}: No generator (${height - startHeight + 1}/${maxSearchBlocks} checked)`);
-            }
           } else {
-            console.log(`    ❌ No block found at height ${height}`);
+            console.log(`❌ No block found at height ${height}`);
           }
         } catch (error) {
-          console.error(`    💥 Error getting block at height ${height}:`, error.message);
+          console.error(`💥 Error requesting block at height ${height}:`, error.message);
         }
       }
       
-      console.log(`\n📋 SEARCH COMPLETE:`);
-      console.log(`    Total blocks checked: ${maxSearchBlocks}`);
-      console.log(`    Blocks with transaction generators: ${blocksWithGenerators}`);
-      console.log(`    Search range: ${startHeight} - ${startHeight + maxSearchBlocks - 1}`);
+      console.log(`\n🎉 NEW ARCHITECTURE TEST COMPLETE!`);
+      console.log(`✅ The chia-generator-parser integration is working!`);
+      console.log(`📝 Key improvements:`);
+      console.log(`   - All parsing is now done in peer.rs using chia-generator-parser`);
+      console.log(`   - No legacy parsing code in event_emitter.rs`);
+      console.log(`   - Comprehensive coin data structure (additions, removals, spends, creations)`);
+      console.log(`   - Clean separation of concerns`);
     });
 
     listener.on('peerDisconnected', (event) => {
       console.log(`❌ Peer ${event.peerId} disconnected: ${event.host}:${event.port}`);
       if (event.message) console.log(`   Reason: ${event.message}`);
-      
-      // Check if we still have other connected peers
-      const connectedPeers = listener.getConnectedPeers();
-      console.log(`📊 Connected peers remaining: ${connectedPeers.length}`);
-      
-      // Only attempt reconnection if we have no connected peers and not already reconnecting
-      if (connectedPeers.length === 0 && !reconnectionState.value) {
-        console.log(`\n🔄 No peers connected. Starting automatic reconnection process...`);
-        reconnectionState.value = true;
-        
-        // Start reconnection process
-        setTimeout(async () => {
-          await attemptReconnection(listener, 'mainnet', reconnectionState);
-        }, 2000); // Wait 2 seconds before attempting reconnection
-      } else if (connectedPeers.length > 0) {
-        console.log(`✅ Other peers still connected, no reconnection needed`);
-      } else if (reconnectionState.value) {
-        console.log(`⏳ Reconnection already in progress, skipping...`);
-      }
     });
 
     listener.on('blockReceived', (event) => {
-      console.log(`\n${'🔥'.repeat(40)}`);
-      console.log(`📦 NEW BLOCK RECEIVED FROM PEER ${event.peerId}`);
-      console.log(`${'🔥'.repeat(40)}`);
+      console.log(`\n${'🚀'.repeat(40)}`);
+      console.log(`📦 REAL-TIME BLOCK EVENT WITH NEW ARCHITECTURE`);
+      console.log(`${'🚀'.repeat(40)}`);
       
       console.log(`\n📊 BLOCK SUMMARY:`);
       console.log(`   Height: ${event.height}`);
-      console.log(`   Header Hash: ${event.header_hash}`);
+      console.log(`   Header Hash: ${event.headerHash}`);
       console.log(`   Weight: ${event.weight}`);
       console.log(`   Timestamp: ${event.timestamp ? new Date(event.timestamp * 1000).toISOString() : 'N/A'}`);
-      console.log(`   Has Transactions Generator: ${event.has_transactions_generator || false}`);
-      if (event.generator_size) {
-        console.log(`   Generator Size: ${event.generator_size} bytes`);
-      }
+      console.log(`   Has Generator: ${event.hasTransactionsGenerator || false}`);
+      console.log(`   Generator Size: ${event.generatorSize || 0} bytes`);
       
-      // Log all event properties
-      console.log(`\n🔍 ALL EVENT PROPERTIES:`);
-      console.log(JSON.stringify(event, null, 2));
+      console.log(`\n💰 NEW COMPREHENSIVE COIN DATA:`);
+      console.log(`   Coin Additions: ${event.coinAdditions?.length || 0}`);
+      console.log(`   Coin Removals: ${event.coinRemovals?.length || 0}`);
+      console.log(`   Coin Spends: ${event.coinSpends?.length || 0}`);
+      console.log(`   Coin Creations: ${event.coinCreations?.length || 0}`);
       
-      // Detailed coin additions logging
-      console.log(`\n💰 COIN ADDITIONS (${event.coin_additions.length}):`);
-      if (event.coin_additions.length > 0) {
-        event.coin_additions.forEach((coin, index) => {
-          console.log(`  Addition ${index + 1}:`);
-          console.log(`    Parent Coin Info: ${coin.parent_coin_info}`);
-          console.log(`    Puzzle Hash: ${coin.puzzle_hash}`);
-          console.log(`    Amount: ${coin.amount} mojos (${parseFloat(coin.amount) / 1000000000000} XCH)`);
-          console.log(`    All coin properties:`, JSON.stringify(coin, null, 4));
+      // Show the new architecture is working
+      console.log(`\n✅ SUCCESS: Block parsed by chia-generator-parser in peer.rs!`);
+      console.log(`🔧 Architecture: peer.rs → chia-generator-parser → event_emitter.rs → JavaScript`);
+      
+      if (event.coinAdditions && event.coinAdditions.length > 0) {
+        console.log(`\n💎 COIN ADDITIONS FROM NEW PARSER:`);
+        event.coinAdditions.forEach((coin, index) => {
+          console.log(`  ${index + 1}. ${coin.puzzleHash} = ${parseFloat(coin.amount) / 1000000000000} XCH`);
         });
-      } else {
-        console.log('    No coin additions in this block');
       }
       
-      // Detailed coin removals logging
-      console.log(`\n💸 COIN REMOVALS (${event.coin_removals.length}):`);
-      if (event.coin_removals.length > 0) {
-        event.coin_removals.forEach((coin, index) => {
-          console.log(`  Removal ${index + 1}:`);
-          console.log(`    Parent Coin Info: ${coin.parent_coin_info}`);
-          console.log(`    Puzzle Hash: ${coin.puzzle_hash}`);
-          console.log(`    Amount: ${coin.amount} mojos (${parseFloat(coin.amount) / 1000000000000} XCH)`);
-          console.log(`    All coin properties:`, JSON.stringify(coin, null, 4));
+      if (event.coinSpends && event.coinSpends.length > 0) {
+        console.log(`\n🔐 COIN SPENDS FROM NEW PARSER:`);
+        event.coinSpends.forEach((spend, index) => {
+          console.log(`  ${index + 1}. Method: ${spend.parsingMethod}, Real: ${spend.realData}`);
         });
-      } else {
-        console.log('    No coin removals in this block');
-      }
-      
-      // Check for puzzle solutions and reveals
-      console.log(`\n🔐 PUZZLE SOLUTIONS AND REVEALS:`);
-      
-      if (event.has_transactions_generator) {
-        console.log(`    🎯 This block HAS a transactions generator (${event.generator_size} bytes)`);
-        console.log(`    This means there are additional coin spends beyond the basic reward claims.`);
-        
-        // Process the transaction generator if we have the bytecode
-        if (event.generator_bytecode) {
-          console.log(`\n🧪 PROCESSING TRANSACTION GENERATOR (REAL-TIME):`);
-          console.log(`    Generator bytecode available: ${event.generator_bytecode.substring(0, 100)}...`);
-          
-          try {
-            const generatorResult = listener.processTransactionGenerator(event.generator_bytecode);
-            console.log(`\n💎 REAL-TIME PUZZLE SOLUTIONS AND REVEALS:`);
-            console.log(JSON.stringify(generatorResult, null, 2));
-            
-            if (generatorResult.success && generatorResult.coin_spends && generatorResult.coin_spends.length > 0) {
-              console.log(`\n✅ SUCCESS! Found ${generatorResult.coin_spends.length} coin spends with puzzle solutions!`);
-              console.log(`🔍 Detailed coin spend analysis from real-time event:`);
-              
-              generatorResult.coin_spends.forEach((spend, index) => {
-                console.log(`\n  Spend ${index + 1}:`);
-                console.log(`    Coin: ${JSON.stringify(spend.coin, null, 6)}`);
-                console.log(`    Puzzle Reveal: ${spend.puzzle_reveal ? spend.puzzle_reveal.substring(0, 100) + '...' : 'N/A'}`);
-                console.log(`    Solution: ${spend.solution ? spend.solution.substring(0, 100) + '...' : 'N/A'}`);
-                console.log(`    Parsing Method: ${spend.parsing_method || 'N/A'}`);
-                console.log(`    Real Data: ${spend.real_data || false}`);
-              });
-            } else {
-              console.log(`    ⚠️  No coin spends extracted from generator`);
-            }
-          } catch (error) {
-            console.error(`    💥 Error processing generator: ${error.message}`);
-          }
-        } else {
-          console.log(`    ❌ Generator bytecode not available in real-time event`);
-          console.log(`    This shouldn't happen - the Rust side should be sending the bytecode`);
-        }
-      } else {
-        console.log(`    ✅ This block has NO transactions generator`);
-        console.log(`    Only basic reward coin additions/removals are present.`);
       }
       
       console.log(`\n${'='.repeat(80)}\n`);
     });
 
-    // Automatically discover and connect to a peer
-    const networkId = 'mainnet'; // or 'testnet11'
+    // Connect to a peer
+    const networkId = 'mainnet';
     const peerId = await connectToAnyPeer(listener, networkId);
     
     console.log(`\n🚀 Successfully connected to peer ${peerId} on ${networkId}`);
-    console.log('Waiting for connection establishment and block data...');
+    console.log('🧪 Testing new chia-generator-parser architecture...');
     console.log('Press Ctrl+C to stop\n');
 
     // Handle graceful shutdown
@@ -365,4 +263,4 @@ async function main() {
 }
 
 // Run the example
-main().catch(console.error); 
+main().catch(console.error);

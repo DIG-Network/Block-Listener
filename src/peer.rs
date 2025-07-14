@@ -1,10 +1,15 @@
 use crate::{error::ChiaError, tls};
+use chia_generator_parser::{
+    parser::BlockParser,
+    types::ParsedBlock,
+};
 use chia_protocol::{
     FullBlock, Handshake as ChiaHandshake, NewPeakWallet, NodeType, ProtocolMessageTypes,
     RequestBlock, RespondBlock,
 };
 use chia_traits::Streamable;
 use futures_util::{SinkExt, StreamExt};
+use std::net::IpAddr;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{
@@ -46,8 +51,22 @@ impl PeerConnection {
         let cert = tls::load_or_generate_cert()?;
         let tls_connector = tls::create_tls_connector(&cert)?;
         let connector = Connector::NativeTls(tls_connector);
-
-        let url = format!("wss://{}:{}/ws", self.host, self.port);
+        
+        // Check if the host is an IPv6 address and format accordingly
+        // IPv6 addresses need to be wrapped in brackets when used in URLs
+        let host_formatted = match self.host.parse::<IpAddr>() {
+            Ok(IpAddr::V6(_)) => {
+                // This is an IPv6 address, wrap it in brackets
+                format!("[{}]", self.host)
+            }
+            _ => {
+                // IPv4 address or hostname, use as-is
+                self.host.clone()
+            }
+        };
+        
+        let url = format!("wss://{}:{}/ws", host_formatted, self.port);
+        info!("WebSocket URL: {}", url);
 
         let (ws_stream, _) = connect_async_tls_with_config(&url, None, false, Some(connector))
             .await
@@ -147,7 +166,7 @@ impl PeerConnection {
 
     pub async fn listen_for_blocks(
         mut ws_stream: WebSocket,
-        block_sender: mpsc::Sender<FullBlock>,
+        block_sender: mpsc::Sender<ParsedBlock>,
     ) -> Result<(), ChiaError> {
         info!("Listening for blocks and messages");
 
@@ -205,12 +224,20 @@ impl PeerConnection {
                                                 block.reward_chain_block.height
                                             );
 
-                                            if let Err(e) = block_sender.send(block).await {
-                                                error!(
-                                                    "Failed to send block through channel: {}",
-                                                    e
-                                                );
-                                                break;
+                                            // Parse the block using chia-generator-parser
+                                            match Self::parse_block(block).await {
+                                                Ok(parsed_block) => {
+                                                    if let Err(e) = block_sender.send(parsed_block).await {
+                                                        error!(
+                                                            "Failed to send parsed block through channel: {}",
+                                                            e
+                                                        );
+                                                        break;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to parse block: {}", e);
+                                                }
                                             }
                                         }
                                         Err(e) => {
@@ -255,6 +282,27 @@ impl PeerConnection {
 
         info!("Connection closed");
         Ok(())
+    }
+
+    /// Parse a FullBlock using chia-generator-parser
+    async fn parse_block(block: FullBlock) -> Result<ParsedBlock, ChiaError> {
+        info!("Parsing block at height {}", block.reward_chain_block.height);
+        
+        // Use chia-generator-parser to parse the block directly
+        let parser = BlockParser::new();
+        let parsed_block = parser.parse_full_block(&block)
+            .map_err(|e| ChiaError::Protocol(e.to_string()))?;
+        
+        info!(
+            "Parsed block {}: {} coin additions, {} coin removals, {} coin spends, generator: {}",
+            parsed_block.height,
+            parsed_block.coin_additions.len(),
+            parsed_block.coin_removals.len(),
+            parsed_block.coin_spends.len(),
+            parsed_block.has_transactions_generator
+        );
+        
+        Ok(parsed_block)
     }
 
     pub async fn request_block_by_height(

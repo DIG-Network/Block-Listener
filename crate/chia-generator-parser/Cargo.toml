@@ -1,0 +1,30 @@
+[package]
+name = "chia-generator-parser"
+version = "0.1.0"
+edition = "2021"
+description = "Chia blockchain generator bytecode parser"
+license = "MIT"
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "production_test"
+path = "examples/production_test.rs"
+
+[dependencies]
+hex = "0.4"
+tracing = "0.1"
+sha2 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+clvmr = "0.14.0"
+clvm-traits = "0.26.0"
+clvm-utils = "0.26.0"
+chia-protocol = "0.26.0"
+chia-traits = "0.26.0"
+thiserror = "1.0"
+
+[features]
+default = []
+python-compat = [] 

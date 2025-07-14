@@ -16,10 +16,12 @@ async function discoverPeers() {
   
   for (const introducer of introducers) {
     try {
-      const addresses = await dns.resolve4(introducer);
-      const peers = addresses.map(ip => ({ 
-        host: ip, 
+      // Use dns.lookup with { all: true } to get both IPv4 and IPv6 addresses
+      const addresses = await dns.lookup(introducer, { all: true });
+      const peers = addresses.map(addr => ({ 
+        host: addr.address, 
         port: 8444,
+        family: addr.family, // 4 for IPv4, 6 for IPv6
         source: introducer 
       }));
       allPeers.push(...peers);
@@ -34,8 +36,16 @@ async function discoverPeers() {
     new Map(allPeers.map(p => [p.host, p])).values()
   );
   
-  console.log(`Discovered ${uniquePeers.length} unique peers total`);
+  console.log(`Discovered ${uniquePeers.length} unique peers total (IPv4 and IPv6)`);
   return uniquePeers;
+}
+
+// Format address for display (IPv6 needs brackets in URLs)
+function formatAddress(host, port, family) {
+  if (family === 6) {
+    return `[${host}]:${port}`;
+  }
+  return `${host}:${port}`;
 }
 
 async function main() {
@@ -58,7 +68,8 @@ async function main() {
     const peerMap = new Map(); // Map peer IDs to peer info
     
     for (const peer of selectedPeers) {
-      console.log(`Adding peer: ${peer.host}:${peer.port} (from ${peer.source})`);
+      const displayAddress = formatAddress(peer.host, peer.port, peer.family);
+      console.log(`Adding peer: ${displayAddress} (from ${peer.source})`);
       try {
         const peerId = listener.addPeer(
           peer.host,
@@ -69,7 +80,7 @@ async function main() {
           peerMap.set(peerId, peer);
         }
       } catch (err) {
-        console.error(`Failed to add peer ${peer.host}:${peer.port}:`, err.message);
+        console.error(`Failed to add peer ${displayAddress}:`, err.message);
       }
     }
 

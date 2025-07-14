@@ -1,7 +1,11 @@
 use crate::error::ChiaError;
 use crate::peer::PeerConnection;
-use clvm_traits::{FromClvm, ToClvm};
-use clvmr::{run_program, Allocator, ChiaDialect, NodePtr};
+use chia_traits::Streamable;
+use chia_generator_parser::{
+    types::ParsedBlock,
+    BlockParser,
+};
+
 use hex;
 use napi::{
     bindgen_prelude::*,
@@ -12,7 +16,7 @@ use napi_derive::napi;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[napi]
 pub struct ChiaBlockListener {
@@ -22,11 +26,11 @@ pub struct ChiaBlockListener {
 struct ChiaBlockListenerInner {
     peers: HashMap<u32, PeerConnectionInfo>,
     next_peer_id: u32,
-    block_listeners: Vec<ThreadsafeFunction<BlockEvent, ErrorStrategy::Fatal>>,
+    block_listeners: Vec<ThreadsafeFunction<BlockReceivedEvent, ErrorStrategy::Fatal>>,
     peer_connected_listeners: Vec<ThreadsafeFunction<PeerConnectedEvent, ErrorStrategy::Fatal>>,
     peer_disconnected_listeners:
         Vec<ThreadsafeFunction<PeerDisconnectedEvent, ErrorStrategy::Fatal>>,
-    block_sender: mpsc::Sender<BlockEvent>,
+    block_sender: mpsc::Sender<ParsedBlockEvent>,
     event_sender: mpsc::Sender<PeerEvent>,
 }
 
@@ -37,9 +41,9 @@ struct PeerConnectionInfo {
 }
 
 #[derive(Clone)]
-struct BlockEvent {
+struct ParsedBlockEvent {
     peer_id: u32,
-    block: BlockData,
+    block: ParsedBlock,
 }
 
 #[derive(Clone)]
@@ -73,6 +77,24 @@ struct PeerDisconnectedEvent {
     message: Option<String>,
 }
 
+// Event struct for block received callbacks
+#[napi(object)]
+#[derive(Clone)]
+pub struct BlockReceivedEvent {
+    pub peer_id: u32,
+    pub height: u32,
+    pub weight: String,
+    pub header_hash: String,
+    pub timestamp: u32,
+    pub coin_additions: Vec<CoinRecord>,
+    pub coin_removals: Vec<CoinRecord>,
+    pub coin_spends: Vec<CoinSpend>,
+    pub coin_creations: Vec<CoinRecord>,
+    pub has_transactions_generator: bool,
+    pub generator_size: u32,
+    pub generator_bytecode: Option<String>,
+}
+
 #[napi(object)]
 #[derive(Clone)]
 pub struct Block {
@@ -82,6 +104,8 @@ pub struct Block {
     pub timestamp: u32,
     pub coin_additions: Vec<CoinRecord>,
     pub coin_removals: Vec<CoinRecord>,
+    pub coin_spends: Vec<CoinSpend>,
+    pub coin_creations: Vec<CoinRecord>,
     pub has_transactions_generator: bool,
     pub generator_size: u32,
     pub generator_bytecode: Option<String>,
@@ -97,31 +121,22 @@ pub struct CoinRecord {
 
 #[napi(object)]
 #[derive(Clone)]
+pub struct CoinSpend {
+    pub coin: CoinRecord,
+    pub puzzle_reveal: String,
+    pub solution: String,
+    pub real_data: bool,
+    pub parsing_method: String,
+    pub offset: u32,
+}
+
+#[napi(object)]
+#[derive(Clone)]
 pub struct TransactionGeneratorResult {
     // Dynamic object for generator results
 }
 
-// Internal CoinRecord struct for internal use  
-#[derive(Clone)]
-struct InternalCoinRecord {
-    parent_coin_info: String,
-    puzzle_hash: String,
-    amount: u64,
-}
 
-// Internal BlockData struct for internal use
-#[derive(Clone)]
-struct BlockData {
-    height: u32,
-    weight: String,
-    header_hash: String,
-    timestamp: Option<u32>,
-    coin_additions: Vec<InternalCoinRecord>,
-    coin_removals: Vec<InternalCoinRecord>,
-    has_transactions_generator: bool,
-    generator_size: Option<u32>,
-    generator_bytecode: Option<String>,
-}
 
 #[napi]
 impl ChiaBlockListener {
@@ -151,18 +166,37 @@ impl ChiaBlockListener {
 
     async fn event_loop(
         inner: Arc<RwLock<ChiaBlockListenerInner>>,
-        mut block_receiver: mpsc::Receiver<BlockEvent>,
+        mut block_receiver: mpsc::Receiver<ParsedBlockEvent>,
         mut event_receiver: mpsc::Receiver<PeerEvent>,
     ) {
         loop {
             tokio::select! {
                 Some(block_event) = block_receiver.recv() => {
+                    // Convert ParsedBlock to external Block format
+                    let external_block = ChiaBlockListener::convert_parsed_block_to_external(&block_event.block);
+                    
+                    // Create BlockReceivedEvent with peer_id
+                    let block_received_event = BlockReceivedEvent {
+                        peer_id: block_event.peer_id,
+                        height: external_block.height,
+                        weight: external_block.weight,
+                        header_hash: external_block.header_hash,
+                        timestamp: external_block.timestamp,
+                        coin_additions: external_block.coin_additions,
+                        coin_removals: external_block.coin_removals,
+                        coin_spends: external_block.coin_spends,
+                        coin_creations: external_block.coin_creations,
+                        has_transactions_generator: external_block.has_transactions_generator,
+                        generator_size: external_block.generator_size,
+                        generator_bytecode: external_block.generator_bytecode,
+                    };
+                    
                     let listeners = {
                         let guard = inner.read().await;
                         guard.block_listeners.clone()
                     };
                     for listener in listeners {
-                        listener.call(block_event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
+                        listener.call(block_received_event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
                     }
                 }
                 Some(peer_event) = event_receiver.recv() => {
@@ -312,26 +346,26 @@ impl ChiaBlockListener {
         match event.as_str() {
             "blockReceived" => {
                 let tsfn = callback.create_threadsafe_function(0, |ctx| {
-                    let event: &BlockEvent = &ctx.value;
+                    let event: &BlockReceivedEvent = &ctx.value;
                     let mut obj = ctx.env.create_object()?;
 
                     obj.set_named_property("peerId", ctx.env.create_uint32(event.peer_id)?)?;
-                    obj.set_named_property("height", ctx.env.create_uint32(event.block.height)?)?;
-                    obj.set_named_property("weight", ctx.env.create_string(&event.block.weight)?)?;
+                    obj.set_named_property("height", ctx.env.create_uint32(event.height)?)?;
+                    obj.set_named_property("weight", ctx.env.create_string(&event.weight)?)?;
                     obj.set_named_property(
                         "header_hash",
-                        ctx.env.create_string(&event.block.header_hash)?,
+                        ctx.env.create_string(&event.header_hash)?,
                     )?;
                     obj.set_named_property(
                         "timestamp",
-                        ctx.env.create_uint32(event.block.timestamp.unwrap_or(0))?,
+                        ctx.env.create_uint32(event.timestamp)?,
                     )?;
 
                     // Coin additions array
                     let mut additions_array = ctx
                         .env
-                        .create_array_with_length(event.block.coin_additions.len())?;
-                    for (i, coin) in event.block.coin_additions.iter().enumerate() {
+                        .create_array_with_length(event.coin_additions.len())?;
+                    for (i, coin) in event.coin_additions.iter().enumerate() {
                         let mut coin_obj = ctx.env.create_object()?;
                         coin_obj.set_named_property(
                             "parent_coin_info",
@@ -352,8 +386,8 @@ impl ChiaBlockListener {
                     // Coin removals array
                     let mut removals_array = ctx
                         .env
-                        .create_array_with_length(event.block.coin_removals.len())?;
-                    for (i, coin) in event.block.coin_removals.iter().enumerate() {
+                        .create_array_with_length(event.coin_removals.len())?;
+                    for (i, coin) in event.coin_removals.iter().enumerate() {
                         let mut coin_obj = ctx.env.create_object()?;
                         coin_obj.set_named_property(
                             "parent_coin_info",
@@ -371,17 +405,87 @@ impl ChiaBlockListener {
                     }
                     obj.set_named_property("coin_removals", removals_array)?;
 
+                    // Coin spends array
+                    let mut spends_array = ctx
+                        .env
+                        .create_array_with_length(event.coin_spends.len())?;
+                    for (i, spend) in event.coin_spends.iter().enumerate() {
+                        let mut spend_obj = ctx.env.create_object()?;
+                        
+                        // Create coin object
+                        let mut coin_obj = ctx.env.create_object()?;
+                        coin_obj.set_named_property(
+                            "parent_coin_info",
+                            ctx.env.create_string(&spend.coin.parent_coin_info)?,
+                        )?;
+                        coin_obj.set_named_property(
+                            "puzzle_hash",
+                            ctx.env.create_string(&spend.coin.puzzle_hash)?,
+                        )?;
+                        coin_obj.set_named_property(
+                            "amount",
+                            ctx.env.create_string(&spend.coin.amount)?,
+                        )?;
+                        spend_obj.set_named_property("coin", coin_obj)?;
+                        
+                        spend_obj.set_named_property(
+                            "puzzle_reveal",
+                            ctx.env.create_string(&spend.puzzle_reveal)?,
+                        )?;
+                        spend_obj.set_named_property(
+                            "solution",
+                            ctx.env.create_string(&spend.solution)?,
+                        )?;
+                        spend_obj.set_named_property(
+                            "real_data",
+                            ctx.env.get_boolean(spend.real_data)?,
+                        )?;
+                        spend_obj.set_named_property(
+                            "parsing_method",
+                            ctx.env.create_string(&spend.parsing_method)?,
+                        )?;
+                        spend_obj.set_named_property(
+                            "offset",
+                            ctx.env.create_uint32(spend.offset)?,
+                        )?;
+                        
+                        spends_array.set_element(i as u32, spend_obj)?;
+                    }
+                    obj.set_named_property("coin_spends", spends_array)?;
+
+                    // Coin creations array
+                    let mut creations_array = ctx
+                        .env
+                        .create_array_with_length(event.coin_creations.len())?;
+                    for (i, coin) in event.coin_creations.iter().enumerate() {
+                        let mut coin_obj = ctx.env.create_object()?;
+                        coin_obj.set_named_property(
+                            "parent_coin_info",
+                            ctx.env.create_string(&coin.parent_coin_info)?,
+                        )?;
+                        coin_obj.set_named_property(
+                            "puzzle_hash",
+                            ctx.env.create_string(&coin.puzzle_hash)?,
+                        )?;
+                        coin_obj.set_named_property(
+                            "amount",
+                            ctx.env.create_string(&coin.amount)?,
+                        )?;
+                        creations_array.set_element(i as u32, coin_obj)?;
+                    }
+                    obj.set_named_property("coin_creations", creations_array)?;
+
                     obj.set_named_property(
                         "has_transactions_generator",
                         ctx.env
-                            .get_boolean(event.block.has_transactions_generator)?,
+                            .get_boolean(event.has_transactions_generator)?,
                     )?;
                     obj.set_named_property(
                         "generator_size",
                         ctx.env
-                            .create_uint32(event.block.generator_size.unwrap_or(0))?,
+                            .create_uint32(event.generator_size)?,
                     )?;
-                    if let Some(bytecode) = &event.block.generator_bytecode {
+                    if let Some(bytecode) = &event.generator_bytecode {
                         obj.set_named_property(
                             "generator_bytecode",
                             ctx.env.create_string(bytecode)?,
@@ -584,112 +688,21 @@ impl ChiaBlockListener {
                         }
                     });
 
-                    // Forward blocks with peer ID
-                    while let Some(block) = block_rx.recv().await {
-                        // Extract coin additions
-                        let mut coin_additions = Vec::new();
-                        let mut coin_removals = Vec::new();
-
-                        // Add farmer and pool reward coins if this is a transaction block
-                        if block.foliage_transaction_block.is_some() {
-                            // Farmer reward coin (0.25 XCH)
-                            coin_additions.push(InternalCoinRecord {
-                                parent_coin_info: hex::encode(block.foliage.reward_block_hash),
-                                puzzle_hash: hex::encode(
-                                    block.foliage.foliage_block_data.farmer_reward_puzzle_hash,
-                                ),
-                                amount: 250000000000,
-                            });
-
-                            // Pool reward coin (1.75 XCH)
-                            coin_additions.push(InternalCoinRecord {
-                                parent_coin_info: hex::encode(block.foliage.reward_block_hash),
-                                puzzle_hash: hex::encode(
-                                    block.foliage.foliage_block_data.pool_target.puzzle_hash,
-                                ),
-                                amount: 1750000000000,
-                            });
-                        }
-
-                        // Add any reward claims from transactions
-                        if let Some(tx_info) = &block.transactions_info {
-                            // Reward claims are coins being spent (removed)
-                            for claim in &tx_info.reward_claims_incorporated {
-                                coin_removals.push(InternalCoinRecord {
-                                    parent_coin_info: hex::encode(&claim.parent_coin_info),
-                                    puzzle_hash: hex::encode(&claim.puzzle_hash),
-                                    amount: claim.amount,
-                                });
-                            }
-                        }
-
-                        // Check for transactions generator
-                        let has_generator = block.transactions_generator.is_some();
-                        let generator_size = block
-                            .transactions_generator
-                            .as_ref()
-                            .map(|g| g.len() as u32);
-                        let generator_bytecode = block
-                            .transactions_generator
-                            .as_ref()
-                            .map(|g| hex::encode(g));
-
-                        // Log coin additions and removals
+                    // Forward parsed blocks with peer ID  
+                    while let Some(parsed_block) = block_rx.recv().await {
                         info!(
-                            "Block {} has {} coin additions and {} coin removals",
-                            block.reward_chain_block.height,
-                            coin_additions.len(),
-                            coin_removals.len()
+                            "Received parsed block {} with {} coin additions, {} coin removals, {} coin spends, {} coin creations",
+                            parsed_block.height,
+                            parsed_block.coin_additions.len(),
+                            parsed_block.coin_removals.len(),
+                            parsed_block.coin_spends.len(),
+                            parsed_block.coin_creations.len()
                         );
 
-                        if !coin_additions.is_empty() {
-                            info!("Coin additions:");
-                            for (i, coin) in coin_additions.iter().enumerate() {
-                                info!(
-                                    "  Addition {}: puzzle_hash={}, amount={} mojos",
-                                    i + 1,
-                                    &coin.puzzle_hash,
-                                    coin.amount
-                                );
-                            }
-                        }
-
-                        if !coin_removals.is_empty() {
-                            info!("Coin removals (reward claims):");
-                            for (i, coin) in coin_removals.iter().enumerate() {
-                                info!(
-                                    "  Removal {}: puzzle_hash={}, amount={} mojos",
-                                    i + 1,
-                                    &coin.puzzle_hash,
-                                    coin.amount
-                                );
-                            }
-                        }
-
-                        if has_generator {
-                            info!("Block has transactions generator ({} bytes) - additional coin spends would need CLVM execution",
-                                        generator_size.unwrap_or(0));
-                        }
-
-                        let block_data = BlockData {
-                            height: block.reward_chain_block.height,
-                            weight: block.reward_chain_block.weight.to_string(),
-                            header_hash: hex::encode(block.header_hash()),
-                            timestamp: block
-                                .foliage_transaction_block
-                                .as_ref()
-                                .map(|f| f.timestamp as u32),
-                            coin_additions,
-                            coin_removals,
-                            has_transactions_generator: has_generator,
-                            generator_size,
-                            generator_bytecode,
-                        };
-
                         let _ = block_sender
-                            .send(BlockEvent {
+                            .send(ParsedBlockEvent {
                                 peer_id,
-                                block: block_data,
+                                block: parsed_block,
                             })
                             .await;
                     }
@@ -716,25 +729,42 @@ impl ChiaBlockListener {
     }
 
     // Helper function to convert internal types to external types
-    fn convert_to_external_block(block_data: &BlockData) -> Block {
+    fn convert_parsed_block_to_external(parsed_block: &ParsedBlock) -> Block {
         Block {
-            height: block_data.height,
-            weight: block_data.weight.clone(),
-            header_hash: block_data.header_hash.clone(),
-            timestamp: block_data.timestamp.unwrap_or(0),
-            coin_additions: block_data.coin_additions.iter().map(|coin| CoinRecord {
-                parent_coin_info: coin.parent_coin_info.clone(),
-                puzzle_hash: coin.puzzle_hash.clone(),
+            height: parsed_block.height,
+            weight: parsed_block.weight.clone(),
+            header_hash: hex::encode(&parsed_block.header_hash),
+            timestamp: parsed_block.timestamp.unwrap_or(0),
+            coin_additions: parsed_block.coin_additions.iter().map(|coin| CoinRecord {
+                parent_coin_info: hex::encode(&coin.parent_coin_info),
+                puzzle_hash: hex::encode(&coin.puzzle_hash),
                 amount: coin.amount.to_string(),
             }).collect(),
-            coin_removals: block_data.coin_removals.iter().map(|coin| CoinRecord {
-                parent_coin_info: coin.parent_coin_info.clone(),
-                puzzle_hash: coin.puzzle_hash.clone(),
+            coin_removals: parsed_block.coin_removals.iter().map(|coin| CoinRecord {
+                parent_coin_info: hex::encode(&coin.parent_coin_info),
+                puzzle_hash: hex::encode(&coin.puzzle_hash),
                 amount: coin.amount.to_string(),
             }).collect(),
-            has_transactions_generator: block_data.has_transactions_generator,
-            generator_size: block_data.generator_size.unwrap_or(0),
-            generator_bytecode: block_data.generator_bytecode.clone(),
+            coin_spends: parsed_block.coin_spends.iter().map(|spend| CoinSpend {
+                coin: CoinRecord {
+                    parent_coin_info: hex::encode(&spend.coin.parent_coin_info),
+                    puzzle_hash: hex::encode(&spend.coin.puzzle_hash),
+                    amount: spend.coin.amount.to_string(),
+                },
+                puzzle_reveal: hex::encode(&spend.puzzle_reveal),
+                solution: hex::encode(&spend.solution),
+                real_data: spend.real_data,
+                parsing_method: spend.parsing_method.clone(),
+                offset: spend.offset,
+            }).collect(),
+            coin_creations: parsed_block.coin_creations.iter().map(|coin| CoinRecord {
+                parent_coin_info: hex::encode(&coin.parent_coin_info),
+                puzzle_hash: hex::encode(&coin.puzzle_hash),
+                amount: coin.amount.to_string(),
+            }).collect(),
+            has_transactions_generator: parsed_block.has_transactions_generator,
+            generator_size: parsed_block.generator_size.unwrap_or(0),
+            generator_bytecode: parsed_block.generator_bytecode.clone(),
         }
     }
 
@@ -771,67 +801,13 @@ impl ChiaBlockListener {
 
         match block_result {
             Ok(block) => {
-                // Convert block to BlockData
-                let mut coin_additions = Vec::new();
-                let mut coin_removals = Vec::new();
-
-                // Add farmer and pool reward coins if this is a transaction block
-                if block.foliage_transaction_block.is_some() {
-                    coin_additions.push(InternalCoinRecord {
-                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                        puzzle_hash: hex::encode(
-                            &block.foliage.foliage_block_data.farmer_reward_puzzle_hash,
-                        ),
-                        amount: 250000000000,
-                    });
-
-                    coin_additions.push(InternalCoinRecord {
-                        parent_coin_info: hex::encode(&block.foliage.reward_block_hash),
-                        puzzle_hash: hex::encode(
-                            &block.foliage.foliage_block_data.pool_target.puzzle_hash,
-                        ),
-                        amount: 1750000000000,
-                    });
-                }
-
-                // Add any reward claims from transactions
-                if let Some(tx_info) = &block.transactions_info {
-                    for claim in &tx_info.reward_claims_incorporated {
-                        coin_removals.push(InternalCoinRecord {
-                            parent_coin_info: hex::encode(&claim.parent_coin_info),
-                            puzzle_hash: hex::encode(&claim.puzzle_hash),
-                            amount: claim.amount,
-                        });
-                    }
-                }
-
-                let has_generator = block.transactions_generator.is_some();
-                let generator_size = block
-                    .transactions_generator
-                    .as_ref()
-                    .map(|g| g.len() as u32);
-                let generator_bytecode = block
-                    .transactions_generator
-                    .as_ref()
-                    .map(|g| hex::encode(g));
-
-                let block_data = BlockData {
-                    height: block.reward_chain_block.height,
-                    weight: block.reward_chain_block.weight.to_string(),
-                    header_hash: hex::encode(block.header_hash()),
-                    timestamp: block
-                        .foliage_transaction_block
-                        .as_ref()
-                        .map(|f| f.timestamp as u32),
-                    coin_additions,
-                    coin_removals,
-                    has_transactions_generator: has_generator,
-                    generator_size,
-                    generator_bytecode,
-                };
+                // Parse the block using chia-generator-parser
+                let parser = BlockParser::new();
+                let parsed_block = parser.parse_full_block(&block)
+                    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to parse block: {}", e)))?;
 
                 // Convert to Block type
-                Ok(Self::convert_to_external_block(&block_data))
+                Ok(Self::convert_parsed_block_to_external(&parsed_block))
             }
             Err(e) => Err(Error::new(
                 Status::GenericFailure,
@@ -947,6 +923,8 @@ impl ChiaBlockListener {
 
         Ok(result)
     }
+
+
 
     fn extract_coin_spends_from_generator(
         &self,
