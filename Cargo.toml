@@ -19,8 +19,6 @@ futures-util = "0.3"
 chia-protocol = "0.26"
 chia-traits = "0.26"
 chia-ssl = "0.26"
-clvmr = "0.14.0"
-clvm-traits = "0.26"
 
 # Networking
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }

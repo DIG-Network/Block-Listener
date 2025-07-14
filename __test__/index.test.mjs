@@ -22,7 +22,6 @@ test('ChiaBlockListener has expected methods', (t) => {
   t.is(typeof listener.off, 'function');
   t.is(typeof listener.getBlockByHeight, 'function');
   t.is(typeof listener.getBlocksRange, 'function');
-  t.is(typeof listener.processTransactionGenerator, 'function');
 })
 
 test('initTracing is a function', (t) => {
