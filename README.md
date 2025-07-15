@@ -33,11 +33,11 @@ const listener = new ChiaBlockListener()
 // Listen for block events
 listener.on('blockReceived', (block) => {
   console.log(`New block received: ${block.height}`)
-  console.log(`Header hash: ${block.headerHash}`)
+  console.log(`Header hash: ${block.header_hash}`)
   console.log(`Timestamp: ${new Date(block.timestamp * 1000)}`)
-  console.log(`Coin additions: ${block.coinAdditions.length}`)
-  console.log(`Coin removals: ${block.coinRemovals.length}`)
-  console.log(`Coin spends: ${block.coinSpends.length}`)
+  console.log(`Coin additions: ${block.coin_additions.length}`)
+  console.log(`Coin removals: ${block.coin_removals.length}`)
+  console.log(`Coin spends: ${block.coin_spends.length}`)
 })
 
 // Listen for peer connection events
@@ -155,11 +155,11 @@ Fired when a peer connection is lost.
 
 ```typescript
 interface BlockReceivedEvent {
-  peerId: string                    // ID of the peer that sent this block
-  height: number                    // Block height
-  weight: string                    // Block weight as string
+  peerId: string                    // IP address of the peer that sent this block
+  height: number                     // Block height
+  weight: string                     // Block weight as string
   headerHash: string               // Block header hash (hex)
-  timestamp: number                // Block timestamp (Unix time)
+  timestamp: number                 // Block timestamp (Unix time)
   coinAdditions: CoinRecord[]      // New coins created in this block
   coinRemovals: CoinRecord[]       // Coins spent in this block
   coinSpends: CoinSpend[]         // Detailed spend information
@@ -173,9 +173,9 @@ interface BlockReceivedEvent {
 
 ```typescript
 interface PeerConnectedEvent {
-  peerId: string  // Unique peer identifier
-  host: string    // Peer hostname/IP
-  port: number    // Peer port number
+  peerId: string  // Peer IP address
+  host: string     // Peer hostname/IP
+  port: number     // Peer port number
 }
 ```
 
@@ -183,7 +183,7 @@ interface PeerConnectedEvent {
 
 ```typescript
 interface PeerDisconnectedEvent {
-  peerId: string    // Unique peer identifier
+  peerId: string   // Peer IP address
   host: string      // Peer hostname/IP
   port: number      // Peer port number
   message?: string  // Optional disconnection reason
@@ -195,8 +195,8 @@ interface PeerDisconnectedEvent {
 ```typescript
 interface CoinRecord {
   parentCoinInfo: string  // Parent coin ID (hex)
-  puzzleHash: string      // Puzzle hash (hex)
-  amount: string          // Coin amount as string
+  puzzleHash: string       // Puzzle hash (hex)
+  amount: string            // Coin amount as string
 }
 ```
 
@@ -204,12 +204,10 @@ interface CoinRecord {
 
 ```typescript
 interface CoinSpend {
-  coin: CoinRecord        // The coin being spent
+  coin: CoinRecord         // The coin being spent
   puzzleReveal: string    // CLVM puzzle bytecode (hex)
-  solution: string        // CLVM solution bytecode (hex)
-  realData: boolean       // Whether this is real spend data
-  parsingMethod: string   // Method used to parse the spend
-  offset: number          // Offset in the generator bytecode
+  solution: string         // CLVM solution bytecode (hex)
+  offset: number           // Offset in the generator bytecode
 }
 ```
 
@@ -238,14 +236,14 @@ listener.on('blockReceived', (block: BlockReceivedEvent) => {
   console.log(`Block ${block.height} from peer ${block.peerId}`)
   
   // Process coin additions
-  block.coinAdditions.forEach((coin: CoinRecord) => {
+  block.coin_additions.forEach((coin: CoinRecord) => {
     console.log(`New coin: ${coin.amount} mojos`)
   })
   
   // Process coin spends
-  block.coinSpends.forEach((spend: CoinSpend) => {
+  block.coin_spends.forEach((spend: CoinSpend) => {
     console.log(`Spend: ${spend.coin.amount} mojos`)
-    console.log(`Puzzle: ${spend.puzzleReveal}`)
+    console.log(`Puzzle: ${spend.puzzle_reveal}`)
     console.log(`Solution: ${spend.solution}`)
   })
 })
@@ -269,7 +267,7 @@ const testnetPeer = listener.addPeer('testnet-node.chia.net', 58444, 'testnet')
 async function getHistoricalBlocks() {
   try {
     const block = listener.getBlockByHeight(mainnetPeer, 1000000)
-    console.log(`Block 1000000 hash: ${block.headerHash}`)
+    console.log(`Block 1000000 hash: ${block.header_hash}`)
     
     const blocks = listener.getBlocksRange(mainnetPeer, 1000000, 1000010)
     console.log(`Retrieved ${blocks.length} blocks`)
@@ -292,8 +290,8 @@ console.log('Available events:', eventTypes)
 listener.on('blockReceived', (block) => {
   const targetPuzzleHash = '0x1234...' // Your puzzle hash
   
-  block.coinSpends.forEach((spend) => {
-    if (spend.coin.puzzleHash === targetPuzzleHash) {
+  block.coin_spends.forEach((spend) => {
+    if (spend.coin.puzzle_hash === targetPuzzleHash) {
       console.log('Found spend for our puzzle!')
       console.log('Amount:', spend.coin.amount)
       console.log('Solution:', spend.solution)

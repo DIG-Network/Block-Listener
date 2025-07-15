@@ -83,6 +83,7 @@ enum PeerEventType {
 #[napi(object)]
 #[derive(Clone)]
 pub struct PeerConnectedEvent {
+    #[napi(js_name = "peerId")]
     pub peer_id: String,
     pub host: String,
     pub port: u32,
@@ -92,6 +93,7 @@ pub struct PeerConnectedEvent {
 #[napi(object)]
 #[derive(Clone)]
 pub struct PeerDisconnectedEvent {
+    #[napi(js_name = "peerId")]
     pub peer_id: String,
     pub host: String,
     pub port: u32,
@@ -102,23 +104,33 @@ pub struct PeerDisconnectedEvent {
 #[napi(object)]
 #[derive(Clone)]
 pub struct BlockReceivedEvent {
+    #[napi(js_name = "peerId")]
     pub peer_id: String,
     pub height: u32,
     pub weight: String,
+    #[napi(js_name = "headerHash")]
     pub header_hash: String,
     pub timestamp: u32,
+    #[napi(js_name = "coinAdditions")]
     pub coin_additions: Vec<CoinRecord>,
+    #[napi(js_name = "coinRemovals")]
     pub coin_removals: Vec<CoinRecord>,
+    #[napi(js_name = "coinSpends")]
     pub coin_spends: Vec<CoinSpend>,
+    #[napi(js_name = "coinCreations")]
     pub coin_creations: Vec<CoinRecord>,
+    #[napi(js_name = "hasTransactionsGenerator")]
     pub has_transactions_generator: bool,
+    #[napi(js_name = "generatorSize")]
     pub generator_size: u32,
 }
 
 #[napi(object)]
 #[derive(Clone)]
 pub struct CoinRecord {
+    #[napi(js_name = "parentCoinInfo")]
     pub parent_coin_info: String,
+    #[napi(js_name = "puzzleHash")]
     pub puzzle_hash: String,
     pub amount: String,
 }
@@ -127,10 +139,9 @@ pub struct CoinRecord {
 #[derive(Clone)]
 pub struct CoinSpend {
     pub coin: CoinRecord,
+    #[napi(js_name = "puzzleReveal")]
     pub puzzle_reveal: String,
     pub solution: String,
-    pub real_data: bool,
-    pub parsing_method: String,
     pub offset: u32,
 }
 
@@ -241,7 +252,7 @@ impl ChiaBlockListener {
 
         let peer_id = rt.block_on(async {
             let mut guard = inner.write().await;
-            let peer_id = format!("{}:{}", host, port);
+            let peer_id = host.clone();
 
             guard.peers.insert(
                 peer_id.clone(),
@@ -331,7 +342,7 @@ impl ChiaBlockListener {
                     obj.set_named_property("height", ctx.env.create_uint32(event.height)?)?;
                     obj.set_named_property("weight", ctx.env.create_string(&event.weight)?)?;
                     obj.set_named_property(
-                        "header_hash",
+                        "headerHash",
                         ctx.env.create_string(&event.header_hash)?,
                     )?;
                     obj.set_named_property("timestamp", ctx.env.create_uint32(event.timestamp)?)?;
@@ -343,11 +354,11 @@ impl ChiaBlockListener {
                     for (i, coin) in event.coin_additions.iter().enumerate() {
                         let mut coin_obj = ctx.env.create_object()?;
                         coin_obj.set_named_property(
-                            "parent_coin_info",
+                            "parentCoinInfo",
                             ctx.env.create_string(&coin.parent_coin_info)?,
                         )?;
                         coin_obj.set_named_property(
-                            "puzzle_hash",
+                            "puzzleHash",
                             ctx.env.create_string(&coin.puzzle_hash)?,
                         )?;
                         coin_obj.set_named_property(
@@ -356,7 +367,7 @@ impl ChiaBlockListener {
                         )?;
                         additions_array.set_element(i as u32, coin_obj)?;
                     }
-                    obj.set_named_property("coin_additions", additions_array)?;
+                    obj.set_named_property("coinAdditions", additions_array)?;
 
                     // Coin removals array
                     let mut removals_array = ctx
@@ -365,11 +376,11 @@ impl ChiaBlockListener {
                     for (i, coin) in event.coin_removals.iter().enumerate() {
                         let mut coin_obj = ctx.env.create_object()?;
                         coin_obj.set_named_property(
-                            "parent_coin_info",
+                            "parentCoinInfo",
                             ctx.env.create_string(&coin.parent_coin_info)?,
                         )?;
                         coin_obj.set_named_property(
-                            "puzzle_hash",
+                            "puzzleHash",
                             ctx.env.create_string(&coin.puzzle_hash)?,
                         )?;
                         coin_obj.set_named_property(
@@ -378,7 +389,7 @@ impl ChiaBlockListener {
                         )?;
                         removals_array.set_element(i as u32, coin_obj)?;
                     }
-                    obj.set_named_property("coin_removals", removals_array)?;
+                    obj.set_named_property("coinRemovals", removals_array)?;
 
                     // Coin spends array
                     let mut spends_array =
@@ -389,11 +400,11 @@ impl ChiaBlockListener {
                         // Create coin object
                         let mut coin_obj = ctx.env.create_object()?;
                         coin_obj.set_named_property(
-                            "parent_coin_info",
+                            "parentCoinInfo",
                             ctx.env.create_string(&spend.coin.parent_coin_info)?,
                         )?;
                         coin_obj.set_named_property(
-                            "puzzle_hash",
+                            "puzzleHash",
                             ctx.env.create_string(&spend.coin.puzzle_hash)?,
                         )?;
                         coin_obj.set_named_property(
@@ -403,27 +414,20 @@ impl ChiaBlockListener {
                         spend_obj.set_named_property("coin", coin_obj)?;
 
                         spend_obj.set_named_property(
-                            "puzzle_reveal",
+                            "puzzleReveal",
                             ctx.env.create_string(&spend.puzzle_reveal)?,
                         )?;
                         spend_obj.set_named_property(
                             "solution",
                             ctx.env.create_string(&spend.solution)?,
                         )?;
-                        spend_obj.set_named_property(
-                            "real_data",
-                            ctx.env.get_boolean(spend.real_data)?,
-                        )?;
-                        spend_obj.set_named_property(
-                            "parsing_method",
-                            ctx.env.create_string(&spend.parsing_method)?,
-                        )?;
+
                         spend_obj
                             .set_named_property("offset", ctx.env.create_uint32(spend.offset)?)?;
 
                         spends_array.set_element(i as u32, spend_obj)?;
                     }
-                    obj.set_named_property("coin_spends", spends_array)?;
+                    obj.set_named_property("coinSpends", spends_array)?;
 
                     // Coin creations array
                     let mut creations_array = ctx
@@ -432,25 +436,25 @@ impl ChiaBlockListener {
                     for (i, coin) in event.coin_creations.iter().enumerate() {
                         let mut coin_obj = ctx.env.create_object()?;
                         coin_obj.set_named_property(
-                            "parent_coin_info",
+                            "parentCoinInfo",
                             ctx.env.create_string(&coin.parent_coin_info)?,
                         )?;
                         coin_obj.set_named_property(
-                            "puzzle_hash",
+                            "puzzleHash",
                             ctx.env.create_string(&coin.puzzle_hash)?,
                         )?;
                         coin_obj
                             .set_named_property("amount", ctx.env.create_string(&coin.amount)?)?;
                         creations_array.set_element(i as u32, coin_obj)?;
                     }
-                    obj.set_named_property("coin_creations", creations_array)?;
+                    obj.set_named_property("coinCreations", creations_array)?;
 
                     obj.set_named_property(
-                        "has_transactions_generator",
+                        "hasTransactionsGenerator",
                         ctx.env.get_boolean(event.has_transactions_generator)?,
                     )?;
                     obj.set_named_property(
-                        "generator_size",
+                        "generatorSize",
                         ctx.env.create_uint32(event.generator_size)?,
                     )?;
 
@@ -734,8 +738,6 @@ impl ChiaBlockListener {
                     },
                     puzzle_reveal: hex::encode(&spend.puzzle_reveal),
                     solution: hex::encode(&spend.solution),
-                    real_data: spend.real_data,
-                    parsing_method: spend.parsing_method.clone(),
                     offset: spend.offset,
                 })
                 .collect(),

@@ -3,10 +3,24 @@ const path = require('path');
 
 const indexDtsPath = path.join(__dirname, '..', 'index.d.ts');
 
-function addTypedOverloads() {
+function fixFieldNames() {
   try {
     // Read the auto-generated index.d.ts file
     let content = fs.readFileSync(indexDtsPath, 'utf8');
+    
+    console.log('✅ Field names should now be camelCase from NAPI js_name attributes');
+    return content;
+    
+  } catch (error) {
+    console.error('❌ Error fixing field names:', error.message);
+    process.exit(1);
+  }
+}
+
+function addTypedOverloads() {
+  try {
+    // Read the auto-generated index.d.ts file (or use fixed content from field name correction)
+    let content = fixFieldNames();
     
     // Check if typed overloads are already present (avoid duplicates)
     if (content.includes('Typed event method overloads')) {

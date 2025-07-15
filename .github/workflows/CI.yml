@@ -251,12 +251,13 @@ jobs:
       - name: Setup and run tests
         uses: addnab/docker-run-action@v3
         with:
-          image: ubuntu:24.04
+          image: debian:bookworm
           options: '--platform linux/arm64 -v ${{ github.workspace }}:/build -w /build'
           run: |
             set -e
+            export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y curl
+            apt-get install -y curl ca-certificates gnupg
             curl -fsSL https://deb.nodesource.com/setup_${{ matrix.node }}.x | bash -
             apt-get install -y nodejs
             node --version
