@@ -193,7 +193,7 @@ jobs:
         node:
           - '20'
           - '22'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
@@ -251,15 +251,23 @@ jobs:
       - name: Setup and run tests
         uses: addnab/docker-run-action@v3
         with:
-          image: debian:bookworm
+          image: ubuntu:24.04
           options: '--platform linux/arm64 -v ${{ github.workspace }}:/build -w /build'
           run: |
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
             apt-get install -y curl ca-certificates gnupg
-            curl -fsSL https://deb.nodesource.com/setup_${{ matrix.node }}.x | bash -
-            apt-get install -y nodejs
+            
+            # Install Node.js manually to avoid Python segfault issues
+            NODE_VERSION="${{ matrix.node }}"
+            if [ "$NODE_VERSION" = "20" ]; then
+              NODE_DOWNLOAD_URL="https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-arm64.tar.xz"
+            else
+              NODE_DOWNLOAD_URL="https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-arm64.tar.xz"
+            fi
+            
+            curl -fsSL "$NODE_DOWNLOAD_URL" | tar -xJ -C /usr/local --strip-components=1
             node --version
             npm --version
             npm ci
