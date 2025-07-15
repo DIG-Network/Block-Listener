@@ -257,19 +257,32 @@ jobs:
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y curl ca-certificates gnupg xz-utils
+            apt-get install -y curl ca-certificates xz-utils
             
-            # Install Node.js manually to avoid Python segfault issues
+            # Install Node.js using a different approach - download pre-built binary directly
             NODE_VERSION="${{ matrix.node }}"
-            if [ "$NODE_VERSION" = "20" ]; then
-              NODE_DOWNLOAD_URL="https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-arm64.tar.xz"
-            else
-              NODE_DOWNLOAD_URL="https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-arm64.tar.xz"
-            fi
+            case "$NODE_VERSION" in
+              "20")
+                FULL_VERSION="20.18.0"
+                ;;
+              "22") 
+                FULL_VERSION="22.11.0"  # Use slightly older version of 22 for stability
+                ;;
+              *)
+                echo "Unsupported Node version: $NODE_VERSION"
+                exit 1
+                ;;
+            esac
             
-            curl -fsSL "$NODE_DOWNLOAD_URL" | tar -xJ -C /usr/local --strip-components=1
-            node --version
-            npm --version
+            # Download and install Node.js binary
+            cd /tmp
+            curl -fsSL "https://nodejs.org/dist/v${FULL_VERSION}/node-v${FULL_VERSION}-linux-arm64.tar.xz" -o node.tar.xz
+            tar -xf node.tar.xz
+            cp -r "node-v${FULL_VERSION}-linux-arm64"/* /usr/local/
+            rm -rf node.tar.xz "node-v${FULL_VERSION}-linux-arm64"
+            
+            # Return to workspace
+            cd /github/workspace
             
             # Verify we're in the right directory and have the required files
             pwd
@@ -277,6 +290,8 @@ jobs:
             echo "Looking for package-lock.json:"
             ls -la package-lock.json || echo "package-lock.json not found"
             
+            node --version
+            npm --version
             npm ci
             npm test
 
