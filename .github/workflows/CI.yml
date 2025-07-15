@@ -252,12 +252,12 @@ jobs:
         uses: addnab/docker-run-action@v3
         with:
           image: ubuntu:24.04
-          options: '--platform linux/arm64 -v ${{ github.workspace }}:/build -w /build'
+          options: '--platform linux/arm64'
           run: |
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y curl ca-certificates gnupg
+            apt-get install -y curl ca-certificates gnupg xz-utils
             
             # Install Node.js manually to avoid Python segfault issues
             NODE_VERSION="${{ matrix.node }}"
