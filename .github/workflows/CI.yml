@@ -252,7 +252,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         with:
           image: ubuntu:24.04
-          options: '--platform linux/arm64'
+          options: '--platform linux/arm64 -w /github/workspace'
           run: |
             set -e
             export DEBIAN_FRONTEND=noninteractive
@@ -270,9 +270,15 @@ jobs:
             curl -fsSL "$NODE_DOWNLOAD_URL" | tar -xJ -C /usr/local --strip-components=1
             node --version
             npm --version
+            
+            # Verify we're in the right directory and have the required files
+            pwd
+            ls -la
+            echo "Looking for package-lock.json:"
+            ls -la package-lock.json || echo "package-lock.json not found"
+            
             npm ci
             npm test
-            ls -la
 
   publish:
     name: Publish
