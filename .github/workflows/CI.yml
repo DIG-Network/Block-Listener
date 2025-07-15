@@ -252,7 +252,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         with:
           image: ubuntu:24.04
-          options: '--platform linux/arm64 -w /github/workspace'
+          options: '--platform linux/arm64 -v ${{ github.workspace }}:/workspace -w /workspace'
           run: |
             set -e
             export DEBIAN_FRONTEND=noninteractive
@@ -282,7 +282,7 @@ jobs:
             rm -rf node.tar.xz "node-v${FULL_VERSION}-linux-arm64"
             
             # Return to workspace
-            cd /github/workspace
+            cd /workspace
             
             # Verify we're in the right directory and have the required files
             pwd
