@@ -2,6 +2,22 @@
 # yarn lockfile v1
 
 
+"@dignetwork/datalayer-driver-win32-x64-msvc@0.1.35":
+  version "0.1.35"
+  resolved "https://registry.npmjs.org/@dignetwork/datalayer-driver-win32-x64-msvc/-/datalayer-driver-win32-x64-msvc-0.1.35.tgz"
+  integrity sha512-ZfISmET8X4ypc8zD22MSkDVBjaPu3BbjPuEcI4EmDdRpo8gpuuDL5SHMPk0kYYlcLUkNLGFtBfs1epLXkEV6wA==
+
+"@dignetwork/datalayer-driver@^0.1.35":
+  version "0.1.35"
+  resolved "https://registry.npmjs.org/@dignetwork/datalayer-driver/-/datalayer-driver-0.1.35.tgz"
+  integrity sha512-qn8jwlIGMVpqurXjTbL4yMmornJuhve9FVEVv/gARaia3yG1/L2poNIi4fnezS92sS1RI5kG5PhUPHmNIuw8dw==
+  optionalDependencies:
+    "@dignetwork/datalayer-driver-darwin-arm64" "0.1.35"
+    "@dignetwork/datalayer-driver-darwin-x64" "0.1.35"
+    "@dignetwork/datalayer-driver-linux-arm64-gnu" "0.1.35"
+    "@dignetwork/datalayer-driver-linux-x64-gnu" "0.1.35"
+    "@dignetwork/datalayer-driver-win32-x64-msvc" "0.1.35"
+
 "@isaacs/cliui@^8.0.2":
   version "8.0.2"
   resolved "https://registry.npmjs.org/@isaacs/cliui/-/cliui-8.0.2.tgz"

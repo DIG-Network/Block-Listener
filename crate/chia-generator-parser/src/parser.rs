@@ -306,9 +306,16 @@ impl BlockParser {
     ) -> Option<CoinSpendInfo> {
         // Extract parent coin info
         let parent_bytes = self.extract_parent_coin_info(allocator, coin_spend)?;
-        let mut parent_arr = [0u8; 32];
-        parent_arr.copy_from_slice(&parent_bytes);
-        let parent_coin_info = Bytes32::new(parent_arr);
+        info!("🔍 DEBUG: parent_bytes length = {}", parent_bytes.len());
+        
+        if parent_bytes.len() != 32 {
+            info!("❌ ERROR: parent_bytes wrong length: {} bytes (expected 32)", parent_bytes.len());
+            return None;
+        }
+        
+        // parent_bytes is already Vec<u8> with 32 bytes, just hex encode it directly
+        let parent_hex = hex::encode(&parent_bytes);
+        info!("🔍 DEBUG: parent_coin_info hex = {} (length: {})", parent_hex, parent_hex.len());
 
         // Extract puzzle, amount, and solution
         let rest1 = rest(allocator, coin_spend).ok()?;
@@ -324,14 +331,21 @@ impl BlockParser {
 
         // Calculate puzzle hash
         let puzzle_hash_vec = tree_hash(allocator, puzzle);
-        let mut puzzle_hash_arr = [0u8; 32];
-        puzzle_hash_arr.copy_from_slice(&puzzle_hash_vec);
-        let puzzle_hash = Bytes32::new(puzzle_hash_arr);
+        info!("🔍 DEBUG: tree_hash returned {} bytes", puzzle_hash_vec.len());
+        
+        if puzzle_hash_vec.len() != 32 {
+            info!("❌ ERROR: tree_hash returned wrong length: {} bytes (expected 32)", puzzle_hash_vec.len());
+            return None;
+        }
+        
+        // tree_hash returns Vec<u8> with 32 bytes, just hex encode it directly
+        let puzzle_hash_hex = hex::encode(&puzzle_hash_vec);
+        info!("🔍 DEBUG: puzzle_hash hex = {} (length: {})", puzzle_hash_hex, puzzle_hash_hex.len());
 
         // Create coin info
         let coin_info = CoinInfo {
-            parent_coin_info: hex::encode(&parent_coin_info),
-            puzzle_hash: hex::encode(&puzzle_hash),
+            parent_coin_info: parent_hex,
+            puzzle_hash: puzzle_hash_hex,
             amount,
         };
 

@@ -2,6 +2,8 @@ const { ChiaBlockListener, initTracing } = require('../index.js');
 const dns = require('dns').promises;
 const fs = require('fs');
 const path = require('path');
+const dig = require('@dignetwork/datalayer-driver');
+
 
 // Create log file with timestamp
 const logFileName = `coin-monitor-${new Date().toISOString().replace(/:/g, '-').split('.')[0]}.log`;
@@ -110,7 +112,7 @@ function formatAddress(host, port, family) {
 }
 
 // Try to connect to peers until one succeeds
-async function connectToAnyPeer(listener, networkId = 'mainnet', maxAttempts = 10) {
+async function connectToAnyPeer(listener, networkId = 'mainnet', maxAttempts = 20) {
   const peers = await discoverPeers(networkId);
   
   console.log(`🔌 Attempting to connect to peers (max ${maxAttempts} attempts)...`);
@@ -154,6 +156,57 @@ async function main() {
     // Log every block as it's received
     listener.on('blockReceived', (event) => {
       console.log('\n📦 Real-time Block Event:');
+      console.log(`Block Height: ${event.height}, Timestamp: ${event.timestamp}`);
+      console.log(`Coin Additions: ${event.coinAdditions.length}, Coin Removals: ${event.coinRemovals.length}`);
+      console.log(`Coin Spends: ${event.coinSpends.length}, Coin Creations: ${event.coinCreations.length}`);
+      
+      // Extract and log puzzle hashes from coin spends
+      if (event.coinSpends && event.coinSpends.length > 0) {
+        const puzzleHashes = event.coinSpends.map(spend => spend.coin.puzzleHash);
+        console.log('\n🧩 Puzzle Hashes from Coin Spends:');
+        console.log(`Found ${puzzleHashes.length} puzzle hashes:`);
+        puzzleHashes.forEach((hash, index) => {
+          console.log(`  ${index + 1}. ${hash} (length: ${hash.length} chars, expected: 64)`);
+          
+          // Only try to convert to address if it's the right length
+          if (hash.length === 64) {
+            try {
+              const address = dig.puzzleHashToAddress(Buffer.from(hash, 'hex'), 'xch');
+              console.log(`    Address: ${address}`);
+            } catch (e) {
+              console.log(`    Address conversion failed: ${e.message}`);
+            }
+          } else {
+            console.log(`    ❌ Invalid puzzle hash length (should be 64 hex chars for 32 bytes)`);
+          }
+        });
+        
+        // Also log unique puzzle hashes
+        const uniquePuzzleHashes = [...new Set(puzzleHashes)];
+        if (uniquePuzzleHashes.length !== puzzleHashes.length) {
+          console.log(`\n🔍 Unique Puzzle Hashes (${uniquePuzzleHashes.length} unique):`);
+          uniquePuzzleHashes.forEach((hash, index) => {
+            console.log(`  ${index + 1}. ${hash} (length: ${hash.length} chars)`);
+            
+            // Only try to convert to address if it's the right length
+            if (hash.length === 64) {
+              try {
+                const address = dig.puzzleHashToAddress(Buffer.from(hash, 'hex'), 'xch');
+                console.log(`    Address: ${address}`);
+              } catch (e) {
+                console.log(`    Address conversion failed: ${e.message}`);
+              }
+            } else {
+              console.log(`    ❌ Invalid puzzle hash length`);
+            }
+          });
+        }
+      } else {
+        console.log('\n🧩 No coin spends found in this block');
+      }
+      
+      // Full block details for debugging (can be commented out if too verbose)
+      console.log('\n📋 Full Block Details:');
       console.log(JSON.stringify(event, null, 2));
       console.log('\n' + '='.repeat(80) + '\n');
     });

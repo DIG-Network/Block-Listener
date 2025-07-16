@@ -707,14 +707,14 @@ impl ChiaBlockListener {
             peer_id,
             height: parsed_block.height,
             weight: parsed_block.weight.clone(),
-            header_hash: hex::encode(&parsed_block.header_hash),
+            header_hash: parsed_block.header_hash.clone(),
             timestamp: parsed_block.timestamp.unwrap_or(0),
             coin_additions: parsed_block
                 .coin_additions
                 .iter()
                 .map(|coin| CoinRecord {
-                    parent_coin_info: hex::encode(&coin.parent_coin_info),
-                    puzzle_hash: hex::encode(&coin.puzzle_hash),
+                    parent_coin_info: coin.parent_coin_info.clone(),
+                    puzzle_hash: coin.puzzle_hash.clone(),
                     amount: coin.amount.to_string(),
                 })
                 .collect(),
@@ -722,8 +722,8 @@ impl ChiaBlockListener {
                 .coin_removals
                 .iter()
                 .map(|coin| CoinRecord {
-                    parent_coin_info: hex::encode(&coin.parent_coin_info),
-                    puzzle_hash: hex::encode(&coin.puzzle_hash),
+                    parent_coin_info: coin.parent_coin_info.clone(),
+                    puzzle_hash: coin.puzzle_hash.clone(),
                     amount: coin.amount.to_string(),
                 })
                 .collect(),
@@ -732,8 +732,8 @@ impl ChiaBlockListener {
                 .iter()
                 .map(|spend| CoinSpend {
                     coin: CoinRecord {
-                        parent_coin_info: hex::encode(&spend.coin.parent_coin_info),
-                        puzzle_hash: hex::encode(&spend.coin.puzzle_hash),
+                        parent_coin_info: spend.coin.parent_coin_info.clone(),
+                        puzzle_hash: spend.coin.puzzle_hash.clone(),
                         amount: spend.coin.amount.to_string(),
                     },
                     puzzle_reveal: hex::encode(&spend.puzzle_reveal),
@@ -745,8 +745,8 @@ impl ChiaBlockListener {
                 .coin_creations
                 .iter()
                 .map(|coin| CoinRecord {
-                    parent_coin_info: hex::encode(&coin.parent_coin_info),
-                    puzzle_hash: hex::encode(&coin.puzzle_hash),
+                    parent_coin_info: coin.parent_coin_info.clone(),
+                    puzzle_hash: coin.puzzle_hash.clone(),
                     amount: coin.amount.to_string(),
                 })
                 .collect(),

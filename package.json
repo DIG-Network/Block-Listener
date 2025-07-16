@@ -1,6 +1,6 @@
 {
   "name": "@dignetwork/chia-block-listener",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "main": "index.js",
   "types": "index.d.ts",
   "repository": {
@@ -56,5 +56,8 @@
     "ci:build": "yarn build",
     "update:images": "echo '💡 Tip: Update your CI images to use newer Rust versions that support edition2024'"
   },
-  "packageManager": "yarn@1.22.22"
+  "packageManager": "yarn@1.22.22",
+  "dependencies": {
+    "@dignetwork/datalayer-driver": "^0.1.35"
+  }
 }
