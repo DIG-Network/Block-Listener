@@ -33,11 +33,11 @@ const listener = new ChiaBlockListener()
 // Listen for block events
 listener.on('blockReceived', (block) => {
   console.log(`New block received: ${block.height}`)
-  console.log(`Header hash: ${block.header_hash}`)
+  console.log(`Header hash: ${block.headerHash}`)
   console.log(`Timestamp: ${new Date(block.timestamp * 1000)}`)
-  console.log(`Coin additions: ${block.coin_additions.length}`)
-  console.log(`Coin removals: ${block.coin_removals.length}`)
-  console.log(`Coin spends: ${block.coin_spends.length}`)
+  console.log(`Coin additions: ${block.coinAdditions.length}`)
+  console.log(`Coin removals: ${block.coinRemovals.length}`)
+  console.log(`Coin spends: ${block.coinSpends.length}`)
 })
 
 // Listen for peer connection events
