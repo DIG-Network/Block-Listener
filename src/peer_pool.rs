@@ -16,7 +16,7 @@ use tokio::time::timeout;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
 
-const RATE_LIMIT_MS: u64 = 50; // Aggressive rate limiting for maximum performance
+const RATE_LIMIT_MS: u64 = 500; // 500ms cooldown between peer usage
 const REQUEST_TIMEOUT_MS: u64 = 5000; // 5 second timeout for block requests (reduced from 10s)
 const CONNECTION_TIMEOUT_MS: u64 = 3000; // 3 second timeout for connections (reduced from 5s)
 
@@ -55,7 +55,8 @@ pub struct ChiaPeerPool {
 
 struct ChiaPeerPoolInner {
     peers: HashMap<String, PeerInfo>,
-    peer_ids: Vec<String>, // For round-robin
+    peer_ids: Vec<String>,    // For round-robin
+    round_robin_index: usize, // Track current position in round-robin
     highest_peak: Option<u32>,
 }
 
@@ -93,6 +94,7 @@ impl ChiaPeerPool {
         let inner = Arc::new(RwLock::new(ChiaPeerPoolInner {
             peers: HashMap::new(),
             peer_ids: Vec::new(),
+            round_robin_index: 0,
             highest_peak: None,
         }));
 
@@ -367,6 +369,10 @@ impl ChiaPeerPool {
             }
 
             guard.peer_ids.retain(|id| id != &peer_id);
+            // Adjust round_robin_index if needed
+            if guard.round_robin_index >= guard.peer_ids.len() && !guard.peer_ids.is_empty() {
+                guard.round_robin_index = 0;
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -383,6 +389,7 @@ impl ChiaPeerPool {
         }
 
         guard.peer_ids.clear();
+        guard.round_robin_index = 0;
         Ok(())
     }
 
@@ -428,41 +435,43 @@ impl ChiaPeerPool {
                             if let Some(request) = request_queue.front() {
                                 match request {
                                     PoolRequest::GetBlockByHeight { .. } => {
-                                        // Find the best available peer (most recently successful)
+                                        // Round-robin peer selection with 500ms cooldown
                                         let now = Instant::now();
-                                        let mut best_peer = None;
-                                        let mut shortest_wait = Duration::from_secs(999);
+                                        let mut selected_peer = None;
+                                        let mut attempts = 0;
+                                        let total_peers = guard.peer_ids.len();
 
-                                        // Check if we have a preferred peer and if it's available
-                                        // The preferred_peer logic is removed, so we just find the first available peer
-                                        for peer_id in &guard.peer_ids {
-                                            if let Some(peer_info) = guard.peers.get(peer_id) {
-                                                if peer_info.is_connected {
-                                                    let time_since_last_use = now.duration_since(peer_info.last_used);
+                                        // Try to find an available peer using round-robin
+                                        while attempts < total_peers {
+                                            if !guard.peer_ids.is_empty() {
+                                                let peer_id = &guard.peer_ids[guard.round_robin_index];
 
-                                                    // Prefer peers that are immediately available
-                                                    if time_since_last_use >= Duration::from_millis(RATE_LIMIT_MS) {
-                                                        best_peer = Some(peer_id.clone());
-                                                        break;
-                                                    }
+                                                if let Some(peer_info) = guard.peers.get(peer_id) {
+                                                    if peer_info.is_connected {
+                                                        let time_since_last_use = now.duration_since(peer_info.last_used);
 
-                                                    // Track the peer that will be available soonest
-                                                    let wait_time = Duration::from_millis(RATE_LIMIT_MS) - time_since_last_use;
-                                                    if wait_time < shortest_wait {
-                                                        shortest_wait = wait_time;
-                                                        best_peer = Some(peer_id.clone());
+                                                        // Check if this peer is available (past cooldown)
+                                                        if time_since_last_use >= Duration::from_millis(RATE_LIMIT_MS) {
+                                                            selected_peer = Some(peer_id.clone());
+                                                            // Move to next peer for next request
+                                                            guard.round_robin_index = (guard.round_robin_index + 1) % total_peers;
+                                                            break;
+                                                        }
                                                     }
                                                 }
+
+                                                // Move to next peer and try again
+                                                guard.round_robin_index = (guard.round_robin_index + 1) % total_peers;
                                             }
+                                            attempts += 1;
                                         }
 
-                                        if let Some(peer_id) = best_peer {
+                                        if let Some(peer_id) = selected_peer {
                                             if let Some(peer_info) = guard.peers.get(&peer_id) {
                                                 let time_since_last_use = now.duration_since(peer_info.last_used);
 
-                                                // Only proceed if peer is available or wait time is very short
-                                                if time_since_last_use >= Duration::from_millis(RATE_LIMIT_MS) ||
-                                                   shortest_wait < Duration::from_millis(25) {
+                                                // Only proceed if peer is available (we already checked this in round-robin)
+                                                if time_since_last_use >= Duration::from_millis(RATE_LIMIT_MS) {
 
                                                     if let Some(request) = request_queue.pop_front() {
                                                         if let Some(peer_info) = guard.peers.get_mut(&peer_id) {
@@ -961,6 +970,10 @@ impl ChiaPeerPool {
                 let _ = worker_tx.send(WorkerRequest::Shutdown).await;
             }
             guard.peer_ids.retain(|id| id != &params.peer_id);
+            // Adjust round_robin_index if needed
+            if guard.round_robin_index >= guard.peer_ids.len() && !guard.peer_ids.is_empty() {
+                guard.round_robin_index = 0;
+            }
         }
 
         // Emit disconnected event
