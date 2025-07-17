@@ -28,43 +28,65 @@ function addTypedOverloads() {
       return;
     }
     
-    // Find the on and off method declarations and add overloads before them
-    const onMethodRegex = /(\s+)(on\(event: string, callback: \(\.\.\.args: any\[\]\) => any\): void)/;
-    const offMethodRegex = /(\s+)(off\(event: string, callback: \(\.\.\.args: any\[\]\) => any\): void)/;
-    
-    // Add typed overloads for 'on' method
-    if (onMethodRegex.test(content)) {
-      content = content.replace(
-        onMethodRegex,
-        `$1// Typed event method overloads
-$1on(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
-$1on(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
-$1on(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
-$1$2`
-      );
-    } else {
-      console.error('❌ Could not find on() method in index.d.ts');
-      return;
+    // Add NewPeakHeightEvent interface if not present
+    if (!content.includes('NewPeakHeightEvent')) {
+      const insertPosition = content.indexOf('export declare function initTracing(): void');
+      if (insertPosition !== -1) {
+        const newInterface = `export interface NewPeakHeightEvent {
+  oldPeak?: number | null
+  newPeak: number
+  peerId: string
+}
+`;
+        content = content.substring(0, insertPosition) + newInterface + content.substring(insertPosition);
+        console.log('✅ Added NewPeakHeightEvent interface');
+      }
     }
     
-    // Add typed overloads for 'off' method
-    if (offMethodRegex.test(content)) {
+    // Handle ChiaBlockListener events - find the class and add typed overloads
+    let blockListenerMatch = content.match(/(export declare class ChiaBlockListener \{[\s\S]*?)(\s+)(on\(event: string, callback: \(\.\.\.args: any\[\]\) => any\): void)/);
+    if (blockListenerMatch) {
+      const replacement = `${blockListenerMatch[1]}${blockListenerMatch[2]}// Typed event method overloads for ChiaBlockListener
+${blockListenerMatch[2]}on(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
+${blockListenerMatch[2]}on(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+${blockListenerMatch[2]}on(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+${blockListenerMatch[2]}${blockListenerMatch[3]}`;
+      content = content.replace(blockListenerMatch[0], replacement);
+      
+      // Also add off method overloads
       content = content.replace(
-        offMethodRegex,
-        `$1off(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
-$1off(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
-$1off(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
-$1$2`
+        /(export declare class ChiaBlockListener \{[\s\S]*?)(\s+)(off\(event: string, callback: \(\.\.\.args: any\[\]\) => any\): void)/,
+        `$1$2off(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
+$2off(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+$2off(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+$2$3`
       );
-    } else {
-      console.error('❌ Could not find off() method in index.d.ts');
-      return;
+    }
+    
+    // Handle ChiaPeerPool events - find the class and add typed overloads
+    let peerPoolMatch = content.match(/(export declare class ChiaPeerPool \{[\s\S]*?)(\s+)(on\(event: string, callback: \(\.\.\.args: any\[\]\) => any\): void)/);
+    if (peerPoolMatch) {
+      const replacement = `${peerPoolMatch[1]}${peerPoolMatch[2]}// Typed event method overloads for ChiaPeerPool
+${peerPoolMatch[2]}on(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+${peerPoolMatch[2]}on(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+${peerPoolMatch[2]}on(event: 'newPeakHeight', callback: (event: NewPeakHeightEvent) => void): void
+${peerPoolMatch[2]}${peerPoolMatch[3]}`;
+      content = content.replace(peerPoolMatch[0], replacement);
+      
+      // Also add off method overloads
+      content = content.replace(
+        /(export declare class ChiaPeerPool \{[\s\S]*?)(\s+)(off\(event: string, callback: \(\.\.\.args: any\[\]\) => any\): void)/,
+        `$1$2off(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+$2off(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+$2off(event: 'newPeakHeight', callback: (event: NewPeakHeightEvent) => void): void
+$2$3`
+      );
     }
     
     // Write the updated content back to the file
     fs.writeFileSync(indexDtsPath, content, 'utf8');
     
-    console.log('✅ Successfully added typed event method overloads to index.d.ts');
+    console.log('✅ Successfully added typed event method overloads for both ChiaBlockListener and ChiaPeerPool');
   } catch (error) {
     console.error('❌ Error adding typed overloads:', error.message);
     process.exit(1);

@@ -6,6 +6,7 @@ use crate::peer::PeerConnection;
 use chia_generator_parser::{BlockParser, ParsedBlock};
 use chia_protocol::FullBlock;
 use hex::encode as hex_encode;
+use napi_derive::napi;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,9 +25,13 @@ pub type PeerDisconnectedCallback = Box<dyn Fn(PeerDisconnectedEvent) + Send + S
 pub type NewPeakHeightCallback = Box<dyn Fn(NewPeakHeightEvent) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone)]
+#[napi(object)]
 pub struct NewPeakHeightEvent {
+    #[napi(js_name = "oldPeak")]
     pub old_peak: Option<u32>,
+    #[napi(js_name = "newPeak")]
     pub new_peak: u32,
+    #[napi(js_name = "peerId")]
     pub peer_id: String,
 }
 

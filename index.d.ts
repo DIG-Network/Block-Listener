@@ -44,6 +44,11 @@ export interface CoinSpend {
   solution: string
   offset: number
 }
+export interface NewPeakHeightEvent {
+  oldPeak?: number | null
+  newPeak: number
+  peerId: string
+}
 export declare function initTracing(): void
 export declare class ChiaBlockListener {
   constructor()
@@ -51,7 +56,21 @@ export declare class ChiaBlockListener {
   disconnectPeer(peerId: string): boolean
   disconnectAllPeers(): void
   getConnectedPeers(): Array<string>
+  // Typed event method overloads
+
+  on(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
+
+  on(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+
+  on(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+
   on(event: string, callback: (...args: any[]) => any): void
+  off(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
+
+  off(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+
+  off(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+
   off(event: string, callback: (...args: any[]) => any): void
   getBlockByHeight(peerId: string, height: number): BlockReceivedEvent
   getBlocksRange(peerId: string, startHeight: number, endHeight: number): Array<BlockReceivedEvent>
@@ -64,6 +83,13 @@ export declare class ChiaPeerPool {
   shutdown(): Promise<void>
   getConnectedPeers(): Promise<Array<string>>
   getPeakHeight(): Promise<number | null>
+  // Typed event method overloads for ChiaPeerPool
+  on(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+  on(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+  on(event: 'newPeakHeight', callback: (event: NewPeakHeightEvent) => void): void
   on(event: string, callback: (...args: any[]) => any): void
+  off(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+  off(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+  off(event: 'newPeakHeight', callback: (event: NewPeakHeightEvent) => void): void
   off(event: string, callback: (...args: any[]) => any): void
 }
