@@ -699,7 +699,7 @@ impl ChiaBlockListener {
     }
 
     // Helper function to convert internal types to external types
-    fn convert_parsed_block_to_external(
+    pub fn convert_parsed_block_to_external(
         parsed_block: &ParsedBlock,
         peer_id: String,
     ) -> BlockReceivedEvent {

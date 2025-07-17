@@ -56,3 +56,13 @@ export declare class ChiaBlockListener {
   getBlockByHeight(peerId: string, height: number): BlockReceivedEvent
   getBlocksRange(peerId: string, startHeight: number, endHeight: number): Array<BlockReceivedEvent>
 }
+export declare class ChiaPeerPool {
+  constructor()
+  addPeer(host: string, port: number, networkId: string): Promise<string>
+  getBlockByHeight(height: number): Promise<BlockReceivedEvent>
+  removePeer(peerId: string): Promise<boolean>
+  shutdown(): Promise<void>
+  getConnectedPeers(): Promise<Array<string>>
+  on(event: string, callback: (...args: any[]) => any): void
+  off(event: string, callback: (...args: any[]) => any): void
+}

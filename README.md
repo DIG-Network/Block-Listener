@@ -10,6 +10,7 @@ A high-performance Chia blockchain listener for Node.js, built with Rust and NAP
 - **Event-Driven Architecture**: TypeScript-friendly event system with full type safety
 - **Transaction Analysis**: Parse CLVM puzzles and solutions from coin spends
 - **Historical Block Access**: Retrieve blocks by height or ranges
+- **Connection Pool**: ChiaPeerPool provides automatic load balancing and rate limiting for historical queries
 - **Cross-platform Support**: Works on Windows, macOS, and Linux (x64 and ARM64)
 - **TypeScript Support**: Complete TypeScript definitions with IntelliSense
 
@@ -127,6 +128,72 @@ Retrieves a range of blocks from a connected peer.
 
 **Returns:** An array of `BlockReceivedEvent` objects
 
+### ChiaPeerPool Class
+
+The `ChiaPeerPool` provides a managed pool of peer connections for retrieving historical blocks with automatic load balancing and rate limiting.
+
+#### Constructor
+
+```javascript
+const pool = new ChiaPeerPool()
+```
+
+Creates a new peer pool instance with built-in rate limiting (500ms per peer).
+
+#### Methods
+
+##### `addPeer(host, port, networkId): Promise<string>`
+
+Adds a peer to the connection pool.
+
+**Parameters:**
+- `host` (string): The hostname or IP address of the Chia node
+- `port` (number): The port number (typically 8444 for mainnet)
+- `networkId` (string): The network identifier ('mainnet', 'testnet', etc.)
+
+**Returns:** A Promise that resolves to a unique peer ID string
+
+##### `getBlockByHeight(height): Promise<BlockReceivedEvent>`
+
+Retrieves a specific block by height using automatic peer selection and load balancing.
+
+**Parameters:**
+- `height` (number): The block height to retrieve
+
+**Returns:** A Promise that resolves to a `BlockReceivedEvent` object
+
+##### `removePeer(peerId): Promise<boolean>`
+
+Removes a peer from the pool.
+
+**Parameters:**
+- `peerId` (string): The peer ID to remove
+
+**Returns:** A Promise that resolves to `true` if the peer was removed, `false` otherwise
+
+##### `shutdown(): Promise<void>`
+
+Shuts down the pool and disconnects all peers.
+
+##### `getConnectedPeers(): Promise<string[]>`
+
+Returns a list of connected peer IDs.
+
+##### `on(event, callback): void`
+
+Registers an event handler for pool events.
+
+**Parameters:**
+- `event` (string): The event name ('peerConnected' or 'peerDisconnected')
+- `callback` (function): The event handler function
+
+##### `off(event, callback): void`
+
+Removes an event handler.
+
+**Parameters:**
+- `event` (string): The event name to stop listening for
+
 ### Events
 
 The `ChiaBlockListener` emits the following events:
@@ -146,6 +213,22 @@ Fired when a connection to a peer is established.
 #### `peerDisconnected`
 
 Fired when a peer connection is lost.
+
+**Callback:** `(event: PeerDisconnectedEvent) => void`
+
+### ChiaPeerPool Events
+
+The `ChiaPeerPool` emits the following events:
+
+#### `peerConnected`
+
+Fired when a peer is successfully added to the pool.
+
+**Callback:** `(event: PeerConnectedEvent) => void`
+
+#### `peerDisconnected`
+
+Fired when a peer is removed from the pool or disconnects.
 
 **Callback:** `(event: PeerDisconnectedEvent) => void`
 
@@ -211,11 +294,130 @@ interface CoinSpend {
 }
 ```
 
+## ChiaPeerPool Usage
+
+The `ChiaPeerPool` is designed for efficiently retrieving historical blocks with automatic load balancing across multiple peers.
+
+### Basic Usage
+
+```javascript
+const { ChiaPeerPool, initTracing } = require('@dignetwork/chia-block-listener')
+
+async function main() {
+  // Initialize tracing
+  initTracing()
+  
+  // Create a peer pool
+  const pool = new ChiaPeerPool()
+  
+  // Listen for pool events
+  pool.on('peerConnected', (event) => {
+    console.log(`Peer connected to pool: ${event.peerId}`)
+  })
+  
+  pool.on('peerDisconnected', (event) => {
+    console.log(`Peer disconnected from pool: ${event.peerId}`)
+  })
+  
+  // Add multiple peers
+  await pool.addPeer('node1.chia.net', 8444, 'mainnet')
+  await pool.addPeer('node2.chia.net', 8444, 'mainnet')
+  await pool.addPeer('node3.chia.net', 8444, 'mainnet')
+  
+  // Fetch blocks with automatic load balancing
+  const block1 = await pool.getBlockByHeight(5000000)
+  const block2 = await pool.getBlockByHeight(5000001)
+  const block3 = await pool.getBlockByHeight(5000002)
+  
+  console.log(`Block ${block1.height}: ${block1.coinSpends.length} spends`)
+  console.log(`Block ${block2.height}: ${block2.coinSpends.length} spends`)
+  console.log(`Block ${block3.height}: ${block3.coinSpends.length} spends`)
+  
+  // Shutdown the pool
+  await pool.shutdown()
+}
+
+main().catch(console.error)
+```
+
+### Advanced Pool Features
+
+#### Rate Limiting
+
+The pool automatically enforces a 500ms rate limit per peer to prevent overwhelming any single node:
+
+```javascript
+// Rapid requests are automatically queued and distributed
+const promises = []
+for (let i = 5000000; i < 5000100; i++) {
+  promises.push(pool.getBlockByHeight(i))
+}
+
+// All requests will be processed efficiently across all peers
+const blocks = await Promise.all(promises)
+console.log(`Retrieved ${blocks.length} blocks`)
+```
+
+#### Dynamic Peer Management
+
+```javascript
+// Monitor pool health
+const peers = await pool.getConnectedPeers()
+console.log(`Active peers in pool: ${peers.length}`)
+
+// Remove underperforming peers
+if (slowPeer) {
+  await pool.removePeer(slowPeer)
+  console.log('Removed slow peer from pool')
+}
+
+// Add new peers dynamically
+if (peers.length < 3) {
+  await pool.addPeer('backup-node.chia.net', 8444, 'mainnet')
+}
+```
+
+#### Error Handling
+
+```javascript
+try {
+  const block = await pool.getBlockByHeight(5000000)
+  console.log(`Retrieved block ${block.height}`)
+} catch (error) {
+  console.error('Failed to retrieve block:', error)
+  
+  // The pool will automatically try other peers
+  // You can also add more peers if needed
+  const peers = await pool.getConnectedPeers()
+  if (peers.length === 0) {
+    console.log('No peers available, adding new ones...')
+    await pool.addPeer('node1.chia.net', 8444, 'mainnet')
+  }
+}
+```
+
+### When to Use ChiaPeerPool vs ChiaBlockListener
+
+- **Use ChiaPeerPool when:**
+  - You need to fetch historical blocks
+  - You want automatic load balancing across multiple peers
+  - You're making many block requests and need rate limiting
+  - You don't need real-time block notifications
+
+- **Use ChiaBlockListener when:**
+  - You need real-time notifications of new blocks
+  - You want to monitor the blockchain as it grows
+  - You need to track specific addresses or puzzle hashes in real-time
+  - You're building applications that react to blockchain events
+
+Both classes can be used together in the same application for different purposes.
+
 ## TypeScript Usage
 
 ```typescript
 import { 
   ChiaBlockListener, 
+  ChiaPeerPool,
   BlockReceivedEvent, 
   PeerConnectedEvent, 
   PeerDisconnectedEvent,
@@ -279,6 +481,23 @@ async function getHistoricalBlocks() {
 // Get event type constants
 const eventTypes = getEventTypes()
 console.log('Available events:', eventTypes)
+
+// TypeScript support for ChiaPeerPool
+const pool = new ChiaPeerPool()
+
+// Type-safe event handling
+pool.on('peerConnected', (event: PeerConnectedEvent) => {
+  console.log(`Pool peer connected: ${event.peerId}`)
+})
+
+// Async/await with proper typing
+async function fetchHistoricalData() {
+  const block: BlockReceivedEvent = await pool.getBlockByHeight(5000000)
+  const peers: string[] = await pool.getConnectedPeers()
+  
+  console.log(`Block ${block.height} has ${block.coinSpends.length} spends`)
+  console.log(`Pool has ${peers.length} active peers`)
+}
 ```
 
 ## Advanced Usage
