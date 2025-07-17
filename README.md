@@ -68,31 +68,6 @@ process.on('SIGINT', () => {
   process.exit(0)
 })
 ```
-
-## Recent Enhancements 🚀
-
-This library includes several powerful enhancements for production use:
-
-### Automatic Failover System
-- **Intelligent Retry Logic**: Automatically tries up to 3 different peers when block requests fail
-- **Smart Peer Selection**: Chooses the best available peer for each request based on response times
-- **Transparent Operation**: Failover happens automatically without user intervention
-
-### Enhanced Error Handling
-- **Protocol Error Detection**: Automatically detects and disconnects peers that refuse blocks or send invalid data
-- **Connection Health Monitoring**: Tracks peer connection health and removes problematic peers
-- **Error Classification**: Distinguishes between temporary issues and permanent peer problems
-
-### Performance Optimizations
-- **Aggressive Rate Limiting**: 50ms rate limiting per peer for maximum throughput
-- **Persistent Connections**: Reuses WebSocket connections for optimal performance
-- **Parallel Processing**: Efficient handling of multiple concurrent block requests
-
-### Developer Experience
-- **camelCase API**: All JavaScript methods use proper camelCase naming conventions
-- **Comprehensive Events**: Detailed event system for monitoring peer lifecycle and errors
-- **TypeScript Support**: Full type safety with complete TypeScript definitions
-
 ## API Reference
 
 ### ChiaBlockListener Class
