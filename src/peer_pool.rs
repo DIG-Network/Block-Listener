@@ -347,10 +347,7 @@ impl ChiaPeerPool {
         });
     }
 
-    async fn peer_worker(
-        mut receiver: mpsc::Receiver<WorkerRequest>,
-        params: PeerWorkerParams,
-    ) {
+    async fn peer_worker(mut receiver: mpsc::Receiver<WorkerRequest>, params: PeerWorkerParams) {
         info!("Starting worker for peer {}", params.peer_id);
 
         while let Some(request) = receiver.recv().await {
@@ -359,7 +356,10 @@ impl ChiaPeerPool {
                     height,
                     response_tx,
                 } => {
-                    debug!("Worker {} fetching block at height {}", params.peer_id, height);
+                    debug!(
+                        "Worker {} fetching block at height {}",
+                        params.peer_id, height
+                    );
 
                     // Create a new connection for this request
                     match params.peer_connection.connect().await {
@@ -371,7 +371,8 @@ impl ChiaPeerPool {
                                 continue;
                             }
 
-                            match params.peer_connection
+                            match params
+                                .peer_connection
                                 .request_block_by_height(height, &mut ws_stream)
                                 .await
                             {
@@ -385,7 +386,9 @@ impl ChiaPeerPool {
 
                                             // Update peak height for this peer if this is higher than what we've seen
                                             let mut guard = params.inner.write().await;
-                                            if let Some(peer_info) = guard.peers.get_mut(&params.peer_id) {
+                                            if let Some(peer_info) =
+                                                guard.peers.get_mut(&params.peer_id)
+                                            {
                                                 match peer_info.peak_height {
                                                     Some(current_peak) => {
                                                         if parsed_block.height > current_peak {
