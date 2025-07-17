@@ -128,7 +128,6 @@ impl ChiaPeerPool {
     #[napi]
     pub fn on(&self, event: String, callback: JsFunction) -> Result<()> {
         let rt = tokio::runtime::Handle::current();
-        let listeners = self.listeners.clone();
 
         match event.as_str() {
             "peerConnected" => {
