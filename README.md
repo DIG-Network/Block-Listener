@@ -6,11 +6,15 @@ A high-performance Chia blockchain listener for Node.js, built with Rust and NAP
 
 - **Real-time Block Monitoring**: Listen for new blocks as they're produced on the Chia network
 - **Peer Management**: Connect to multiple Chia full nodes simultaneously
+- **Automatic Failover**: Intelligent peer failover with automatic retry across multiple peers
+- **Enhanced Error Handling**: Automatic disconnection of peers that refuse blocks or have protocol errors
 - **Efficient Parsing**: Fast extraction of coin spends, additions, and removals from blocks
 - **Event-Driven Architecture**: TypeScript-friendly event system with full type safety
 - **Transaction Analysis**: Parse CLVM puzzles and solutions from coin spends
-- **Historical Block Access**: Retrieve blocks by height or ranges
+- **Historical Block Access**: Retrieve blocks by height or ranges with automatic load balancing
 - **Connection Pool**: ChiaPeerPool provides automatic load balancing and rate limiting for historical queries
+- **Peak Height Tracking**: Monitor blockchain sync progress across all connected peers
+- **DNS Peer Discovery**: Automatic peer discovery using Chia network DNS introducers
 - **Cross-platform Support**: Works on Windows, macOS, and Linux (x64 and ARM64)
 - **TypeScript Support**: Complete TypeScript definitions with IntelliSense
 
@@ -64,6 +68,30 @@ process.on('SIGINT', () => {
   process.exit(0)
 })
 ```
+
+## Recent Enhancements 🚀
+
+This library includes several powerful enhancements for production use:
+
+### Automatic Failover System
+- **Intelligent Retry Logic**: Automatically tries up to 3 different peers when block requests fail
+- **Smart Peer Selection**: Chooses the best available peer for each request based on response times
+- **Transparent Operation**: Failover happens automatically without user intervention
+
+### Enhanced Error Handling
+- **Protocol Error Detection**: Automatically detects and disconnects peers that refuse blocks or send invalid data
+- **Connection Health Monitoring**: Tracks peer connection health and removes problematic peers
+- **Error Classification**: Distinguishes between temporary issues and permanent peer problems
+
+### Performance Optimizations
+- **Aggressive Rate Limiting**: 50ms rate limiting per peer for maximum throughput
+- **Persistent Connections**: Reuses WebSocket connections for optimal performance
+- **Parallel Processing**: Efficient handling of multiple concurrent block requests
+
+### Developer Experience
+- **camelCase API**: All JavaScript methods use proper camelCase naming conventions
+- **Comprehensive Events**: Detailed event system for monitoring peer lifecycle and errors
+- **TypeScript Support**: Full type safety with complete TypeScript definitions
 
 ## API Reference
 
@@ -130,7 +158,7 @@ Retrieves a range of blocks from a connected peer.
 
 ### ChiaPeerPool Class
 
-The `ChiaPeerPool` provides a managed pool of peer connections for retrieving historical blocks with automatic load balancing and rate limiting.
+The `ChiaPeerPool` provides a managed pool of peer connections for retrieving historical blocks with automatic load balancing and intelligent failover across multiple peers. When a peer fails to provide a block or experiences protocol errors, the pool automatically tries alternative peers and removes problematic peers from the pool.
 
 #### Constructor
 
@@ -320,7 +348,7 @@ interface CoinSpend {
 
 ## ChiaPeerPool Usage
 
-The `ChiaPeerPool` is designed for efficiently retrieving historical blocks with automatic load balancing across multiple peers.
+The `ChiaPeerPool` is designed for efficiently retrieving historical blocks with automatic load balancing and intelligent failover across multiple peers. When a peer fails to provide a block or experiences protocol errors, the pool automatically tries alternative peers and removes problematic peers from the pool.
 
 ### Basic Usage
 
@@ -375,7 +403,7 @@ main().catch(console.error)
 
 #### Rate Limiting
 
-The pool automatically enforces a 500ms rate limit per peer to prevent overwhelming any single node:
+The pool automatically enforces a 50ms rate limit per peer for maximum performance while preventing node overload:
 
 ```javascript
 // Rapid requests are automatically queued and distributed
@@ -385,9 +413,47 @@ for (let i = 5000000; i < 5000100; i++) {
 }
 
 // All requests will be processed efficiently across all peers
+// with automatic load balancing and rate limiting
 const blocks = await Promise.all(promises)
 console.log(`Retrieved ${blocks.length} blocks`)
 ```
+
+#### Automatic Failover and Error Handling
+
+The pool provides robust error handling with automatic failover:
+
+```javascript
+// The pool automatically handles various error scenarios:
+
+// 1. Connection failures - automatically tries other peers
+try {
+  const block = await pool.getBlockByHeight(5000000)
+  console.log(`Retrieved block ${block.height}`)
+} catch (error) {
+  // If all peers fail, you'll get an error after all retry attempts
+  console.error('All peers failed:', error.message)
+}
+
+// 2. Protocol errors - peers that refuse blocks are automatically disconnected
+pool.on('peerDisconnected', (event) => {
+  console.log(`Peer ${event.peerId} disconnected: ${event.reason}`)
+  // Reasons include: "Block request rejected", "Protocol error", "Connection timeout"
+})
+
+// 3. Automatic peer cleanup - problematic peers are removed from the pool
+console.log('Active peers before:', await pool.getConnectedPeers())
+await pool.getBlockByHeight(5000000) // May trigger peer removal
+console.log('Active peers after:', await pool.getConnectedPeers())
+
+// 4. Multiple retry attempts - tries up to 3 different peers per request
+// This happens automatically and transparently
+const block = await pool.getBlockByHeight(5000000) // Will try multiple peers if needed
+```
+
+**Error Types Handled Automatically:**
+- **Connection Errors**: Timeouts, network failures, WebSocket errors
+- **Protocol Errors**: Block rejections, parsing failures, handshake failures
+- **Peer Misbehavior**: Unexpected responses, invalid data formats
 
 #### Dynamic Peer Management
 
@@ -510,14 +576,14 @@ listener.on('blockReceived', (block: BlockReceivedEvent) => {
   console.log(`Block ${block.height} from peer ${block.peerId}`)
   
   // Process coin additions
-  block.coin_additions.forEach((coin: CoinRecord) => {
+  block.coinAdditions.forEach((coin: CoinRecord) => {
     console.log(`New coin: ${coin.amount} mojos`)
   })
   
   // Process coin spends
-  block.coin_spends.forEach((spend: CoinSpend) => {
+  block.coinSpends.forEach((spend: CoinSpend) => {
     console.log(`Spend: ${spend.coin.amount} mojos`)
-    console.log(`Puzzle: ${spend.puzzle_reveal}`)
+    console.log(`Puzzle: ${spend.puzzleReveal}`)
     console.log(`Solution: ${spend.solution}`)
   })
 })
@@ -541,7 +607,7 @@ const testnetPeer = listener.addPeer('testnet-node.chia.net', 58444, 'testnet')
 async function getHistoricalBlocks() {
   try {
     const block = listener.getBlockByHeight(mainnetPeer, 1000000)
-    console.log(`Block 1000000 hash: ${block.header_hash}`)
+    console.log(`Block 1000000 hash: ${block.headerHash}`)
     
     const blocks = listener.getBlocksRange(mainnetPeer, 1000000, 1000010)
     console.log(`Retrieved ${blocks.length} blocks`)
@@ -587,8 +653,8 @@ async function fetchHistoricalData() {
 listener.on('blockReceived', (block) => {
   const targetPuzzleHash = '0x1234...' // Your puzzle hash
   
-  block.coin_spends.forEach((spend) => {
-    if (spend.coin.puzzle_hash === targetPuzzleHash) {
+  block.coinSpends.forEach((spend) => {
+    if (spend.coin.puzzleHash === targetPuzzleHash) {
       console.log('Found spend for our puzzle!')
       console.log('Amount:', spend.coin.amount)
       console.log('Solution:', spend.solution)

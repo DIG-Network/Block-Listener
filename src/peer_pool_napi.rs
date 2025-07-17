@@ -74,7 +74,7 @@ impl ChiaPeerPool {
         Self { pool, listeners }
     }
 
-    #[napi]
+    #[napi(js_name = "addPeer")]
     pub async fn add_peer(&self, host: String, port: u16, network_id: String) -> Result<String> {
         self.pool
             .add_peer(host, port, network_id)
@@ -82,7 +82,7 @@ impl ChiaPeerPool {
             .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to add peer: {e}")))
     }
 
-    #[napi]
+    #[napi(js_name = "getBlockByHeight")]
     pub async fn get_block_by_height(&self, height: u32) -> Result<BlockReceivedEvent> {
         self.pool
             .get_block_by_height(height as u64)
@@ -90,7 +90,7 @@ impl ChiaPeerPool {
             .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get block: {e}")))
     }
 
-    #[napi]
+    #[napi(js_name = "removePeer")]
     pub async fn remove_peer(&self, peer_id: String) -> Result<bool> {
         self.pool.remove_peer(peer_id).await.map_err(|e| {
             Error::new(
@@ -110,7 +110,7 @@ impl ChiaPeerPool {
         })
     }
 
-    #[napi]
+    #[napi(js_name = "getConnectedPeers")]
     pub async fn get_connected_peers(&self) -> Result<Vec<String>> {
         self.pool.get_connected_peers().await.map_err(|e| {
             Error::new(
@@ -120,7 +120,7 @@ impl ChiaPeerPool {
         })
     }
 
-    #[napi]
+    #[napi(js_name = "getPeakHeight")]
     pub async fn get_peak_height(&self) -> Result<Option<u32>> {
         Ok(self.pool.get_highest_peak().await)
     }
