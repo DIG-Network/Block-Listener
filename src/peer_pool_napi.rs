@@ -1,5 +1,5 @@
 use crate::event_emitter::{BlockReceivedEvent, PeerConnectedEvent, PeerDisconnectedEvent};
-use crate::peer_pool::ChiaPeerPool as InternalPeerPool;
+use crate::peer_pool::{ChiaPeerPool as InternalPeerPool, NewPeakHeightEvent};
 use napi::bindgen_prelude::*;
 use napi::{
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
@@ -20,6 +20,7 @@ struct EventListeners {
     peer_connected_listeners: Vec<ThreadsafeFunction<PeerConnectedEvent, ErrorStrategy::Fatal>>,
     peer_disconnected_listeners:
         Vec<ThreadsafeFunction<PeerDisconnectedEvent, ErrorStrategy::Fatal>>,
+    new_peak_height_listeners: Vec<ThreadsafeFunction<NewPeakHeightEvent, ErrorStrategy::Fatal>>,
 }
 
 #[napi]
@@ -30,6 +31,7 @@ impl ChiaPeerPool {
         let listeners = Arc::new(RwLock::new(EventListeners {
             peer_connected_listeners: Vec::new(),
             peer_disconnected_listeners: Vec::new(),
+            new_peak_height_listeners: Vec::new(),
         }));
 
         let pool = Arc::new(InternalPeerPool::new());
@@ -37,6 +39,7 @@ impl ChiaPeerPool {
         // Set event callbacks on the pool
         let listeners_connected = listeners.clone();
         let listeners_disconnected = listeners.clone();
+        let listeners_new_peak = listeners.clone();
 
         pool.set_event_callbacks(
             Box::new(move |event| {
@@ -57,6 +60,15 @@ impl ChiaPeerPool {
                     }
                 });
             }),
+            Box::new(move |event| {
+                let listeners = listeners_new_peak.clone();
+                tokio::spawn(async move {
+                    let guard = listeners.read().await;
+                    for listener in &guard.new_peak_height_listeners {
+                        listener.call(event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
+                    }
+                });
+            }),
         );
 
         Self { pool, listeners }
@@ -67,7 +79,7 @@ impl ChiaPeerPool {
         self.pool
             .add_peer(host, port, network_id)
             .await
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to add peer: {}", e)))
+            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to add peer: {e}")))
     }
 
     #[napi]
@@ -75,12 +87,7 @@ impl ChiaPeerPool {
         self.pool
             .get_block_by_height(height as u64)
             .await
-            .map_err(|e| {
-                Error::new(
-                    Status::GenericFailure,
-                    format!("Failed to get block: {}", e),
-                )
-            })
+            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get block: {e}")))
     }
 
     #[napi]
@@ -88,7 +95,7 @@ impl ChiaPeerPool {
         self.pool.remove_peer(peer_id).await.map_err(|e| {
             Error::new(
                 Status::GenericFailure,
-                format!("Failed to remove peer: {}", e),
+                format!("Failed to remove peer: {e}"),
             )
         })
     }
@@ -98,7 +105,7 @@ impl ChiaPeerPool {
         self.pool.shutdown().await.map_err(|e| {
             Error::new(
                 Status::GenericFailure,
-                format!("Failed to shutdown pool: {}", e),
+                format!("Failed to shutdown pool: {e}"),
             )
         })
     }
@@ -108,9 +115,14 @@ impl ChiaPeerPool {
         self.pool.get_connected_peers().await.map_err(|e| {
             Error::new(
                 Status::GenericFailure,
-                format!("Failed to get connected peers: {}", e),
+                format!("Failed to get connected peers: {e}"),
             )
         })
+    }
+
+    #[napi]
+    pub async fn get_peak_height(&self) -> Result<Option<u32>> {
+        Ok(self.pool.get_highest_peak().await)
     }
 
     #[napi]
@@ -125,14 +137,12 @@ impl ChiaPeerPool {
                     let mut obj = ctx.env.create_object()?;
                     obj.set_named_property("peerId", ctx.env.create_string(&event.peer_id)?)?;
                     obj.set_named_property("host", ctx.env.create_string(&event.host)?)?;
-                    obj.set_named_property("port", ctx.env.create_uint32(event.port as u32)?)?;
+                    obj.set_named_property("port", ctx.env.create_uint32(event.port)?)?;
                     Ok(vec![obj])
                 })?;
 
-                rt.block_on(async {
-                    let mut guard = listeners.write().await;
-                    guard.peer_connected_listeners.push(tsfn);
-                });
+                let mut guard = rt.block_on(self.listeners.write());
+                guard.peer_connected_listeners.push(tsfn);
             }
             "peerDisconnected" => {
                 let tsfn = callback.create_threadsafe_function(0, |ctx| {
@@ -140,22 +150,38 @@ impl ChiaPeerPool {
                     let mut obj = ctx.env.create_object()?;
                     obj.set_named_property("peerId", ctx.env.create_string(&event.peer_id)?)?;
                     obj.set_named_property("host", ctx.env.create_string(&event.host)?)?;
-                    obj.set_named_property("port", ctx.env.create_uint32(event.port as u32)?)?;
+                    obj.set_named_property("port", ctx.env.create_uint32(event.port)?)?;
                     if let Some(msg) = &event.message {
                         obj.set_named_property("message", ctx.env.create_string(msg)?)?;
                     }
                     Ok(vec![obj])
                 })?;
 
-                rt.block_on(async {
-                    let mut guard = listeners.write().await;
-                    guard.peer_disconnected_listeners.push(tsfn);
-                });
+                let mut guard = rt.block_on(self.listeners.write());
+                guard.peer_disconnected_listeners.push(tsfn);
+            }
+            "newPeakHeight" => {
+                let tsfn = callback.create_threadsafe_function(0, |ctx| {
+                    let event: &NewPeakHeightEvent = &ctx.value;
+                    let mut obj = ctx.env.create_object()?;
+                    match event.old_peak {
+                        Some(old) => {
+                            obj.set_named_property("oldPeak", ctx.env.create_uint32(old)?)?
+                        }
+                        None => obj.set_named_property("oldPeak", ctx.env.get_null()?)?,
+                    }
+                    obj.set_named_property("newPeak", ctx.env.create_uint32(event.new_peak)?)?;
+                    obj.set_named_property("peerId", ctx.env.create_string(&event.peer_id)?)?;
+                    Ok(vec![obj])
+                })?;
+
+                let mut guard = rt.block_on(self.listeners.write());
+                guard.new_peak_height_listeners.push(tsfn);
             }
             _ => {
                 return Err(Error::new(
                     Status::InvalidArg,
-                    format!("Unknown event type: {}", event),
+                    format!("Unknown event type: {event}"),
                 ))
             }
         }
@@ -178,10 +204,19 @@ impl ChiaPeerPool {
                 "peerDisconnected" => {
                     guard.peer_disconnected_listeners.clear();
                 }
+                "newPeakHeight" => {
+                    guard.new_peak_height_listeners.clear();
+                }
                 _ => {}
             }
         });
 
         Ok(())
+    }
+}
+
+impl Default for ChiaPeerPool {
+    fn default() -> Self {
+        Self::new()
     }
 }

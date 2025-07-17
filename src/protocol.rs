@@ -2,8 +2,10 @@ use chia_protocol::{Bytes32, ProtocolMessageTypes};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[allow(dead_code)]
 pub const MAINNET_GENESIS_CHALLENGE: &str =
     "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
+#[allow(dead_code)]
 pub const TESTNET11_GENESIS_CHALLENGE: &str =
     "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615";
 
@@ -18,18 +20,20 @@ pub struct Handshake {
 }
 
 impl Handshake {
+    #[allow(dead_code)]
     pub fn new(network_id: String, port: u16) -> Self {
         Self {
             network_id,
-            protocol_version: "0.0.36".to_string(),
-            software_version: "2.4.0".to_string(),
+            protocol_version: "0.0.38".to_string(),
+            software_version: "1.0.0".to_string(),
             server_port: port,
             node_type: 1, // FULL_NODE
-            capabilities: vec![],
+            capabilities: vec![(1, "base".to_string()), (2, "full_node".to_string())],
         }
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Message {
     pub msg_type: ProtocolMessageTypes,
@@ -37,75 +41,78 @@ pub struct Message {
     pub data: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl Message {
     pub fn new(msg_type: ProtocolMessageTypes, id: Option<u16>, data: Vec<u8>) -> Self {
         Self { msg_type, id, data }
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, std::io::Error> {
-        let mut bytes = Vec::new();
+        // Message format:
+        // - msg_type (1 byte)
+        // - optional id (2 bytes if present)
+        // - data_len (4 bytes, big-endian)
+        // - data
 
-        // Write message type
+        let mut bytes = Vec::new();
         bytes.push(self.msg_type as u8);
 
-        // Write optional ID
         if let Some(id) = self.id {
-            bytes.push(1); // Has ID
+            bytes.push(1); // has_id flag
             bytes.extend_from_slice(&id.to_be_bytes());
         } else {
-            bytes.push(0); // No ID
+            bytes.push(0); // no id
         }
 
-        // Write data
+        let data_len = self.data.len() as u32;
+        bytes.extend_from_slice(&data_len.to_be_bytes());
         bytes.extend_from_slice(&self.data);
 
         Ok(bytes)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, std::io::Error> {
-        if bytes.len() < 2 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Message too short",
-            ));
+        use std::io::{Error, ErrorKind};
+
+        if bytes.len() < 6 {
+            return Err(Error::new(ErrorKind::InvalidData, "Message too short"));
         }
 
-        // In newer versions, we might need to handle this differently
-        // For now, we'll use a match statement
-        let msg_type = match bytes[0] {
-            1 => ProtocolMessageTypes::Handshake,
-            3 => ProtocolMessageTypes::NewPeak,
-            4 => ProtocolMessageTypes::NewTransaction,
-            5 => ProtocolMessageTypes::RequestBlock,
-            6 => ProtocolMessageTypes::RespondBlock,
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Unknown message type: {}", bytes[0]),
-                ))
-            }
-        };
+        let msg_type = bytes[0];
+        let has_id = bytes[1] != 0;
 
-        let (id, data_start) = if bytes[1] == 1 {
-            // Has ID
-            if bytes.len() < 4 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Message too short for ID",
-                ));
+        let (id, data_start) = if has_id {
+            if bytes.len() < 8 {
+                return Err(Error::new(ErrorKind::InvalidData, "Message too short"));
             }
             let id = u16::from_be_bytes([bytes[2], bytes[3]]);
-            (Some(id), 4)
+            (Some(id), 8)
         } else {
-            (None, 2)
+            (None, 6)
         };
+
+        let data_len = u32::from_be_bytes([
+            bytes[data_start - 4],
+            bytes[data_start - 3],
+            bytes[data_start - 2],
+            bytes[data_start - 1],
+        ]);
 
         let data = bytes[data_start..].to_vec();
 
-        Ok(Self { msg_type, id, data })
+        if data.len() != data_len as usize {
+            return Err(Error::new(ErrorKind::InvalidData, "Data length mismatch"));
+        }
+
+        Ok(Self {
+            msg_type: unsafe { std::mem::transmute::<u8, ProtocolMessageTypes>(msg_type) },
+            id,
+            data,
+        })
     }
 }
 
+#[allow(dead_code)]
 pub fn calculate_node_id(cert_der: &[u8]) -> Result<Bytes32, std::io::Error> {
     let mut hasher = Sha256::new();
     hasher.update(cert_der);

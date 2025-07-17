@@ -25,7 +25,7 @@ pub fn load_or_generate_cert() -> Result<ChiaCertificate, ChiaError> {
     } else {
         // Generate new certificates
         let cert = ChiaCertificate::generate()
-            .map_err(|e| ChiaError::Other(format!("Failed to generate certificate: {}", e)))?;
+            .map_err(|e| ChiaError::Other(format!("Failed to generate certificate: {e}")))?;
 
         // Save for future use
         fs::write(&cert_path, &cert.cert_pem).map_err(ChiaError::Io)?;
@@ -38,17 +38,17 @@ pub fn load_or_generate_cert() -> Result<ChiaCertificate, ChiaError> {
 /// Creates a native-tls connector from a Chia certificate
 pub fn create_tls_connector(cert: &ChiaCertificate) -> Result<TlsConnector, ChiaError> {
     let identity = Identity::from_pkcs8(cert.cert_pem.as_bytes(), cert.key_pem.as_bytes())
-        .map_err(|e| ChiaError::Tls(format!("Failed to create identity: {}", e)))?;
+        .map_err(|e| ChiaError::Tls(format!("Failed to create identity: {e}")))?;
 
     let ca_cert = Certificate::from_pem(CHIA_CA_CRT.as_bytes())
-        .map_err(|e| ChiaError::Tls(format!("Failed to parse CA certificate: {}", e)))?;
+        .map_err(|e| ChiaError::Tls(format!("Failed to parse CA certificate: {e}")))?;
 
     let tls_connector = TlsConnector::builder()
         .identity(identity)
         .add_root_certificate(ca_cert)
         .danger_accept_invalid_certs(true) // Accept self-signed certificates
         .build()
-        .map_err(|e| ChiaError::Tls(format!("Failed to build TLS connector: {}", e)))?;
+        .map_err(|e| ChiaError::Tls(format!("Failed to build TLS connector: {e}")))?;
 
     Ok(tls_connector)
 }

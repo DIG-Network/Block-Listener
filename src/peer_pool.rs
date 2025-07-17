@@ -16,25 +16,35 @@ const RATE_LIMIT_MS: u64 = 500;
 
 pub type PeerConnectedCallback = Box<dyn Fn(PeerConnectedEvent) + Send + Sync + 'static>;
 pub type PeerDisconnectedCallback = Box<dyn Fn(PeerDisconnectedEvent) + Send + Sync + 'static>;
+pub type NewPeakHeightCallback = Box<dyn Fn(NewPeakHeightEvent) + Send + Sync + 'static>;
+
+#[derive(Debug, Clone)]
+pub struct NewPeakHeightEvent {
+    pub old_peak: Option<u32>,
+    pub new_peak: u32,
+    pub peer_id: String,
+}
 
 pub struct ChiaPeerPool {
     inner: Arc<RwLock<ChiaPeerPoolInner>>,
     request_sender: mpsc::Sender<PoolRequest>,
     connected_callback: Arc<RwLock<Option<PeerConnectedCallback>>>,
     disconnected_callback: Arc<RwLock<Option<PeerDisconnectedCallback>>>,
+    new_peak_callback: Arc<RwLock<Option<NewPeakHeightCallback>>>,
 }
 
 struct ChiaPeerPoolInner {
     peers: HashMap<String, PeerInfo>,
     peer_ids: Vec<String>, // For round-robin
     current_index: usize,
+    highest_peak: Option<u32>,
 }
 
 struct PeerInfo {
-    connection: PeerConnection,
     last_used: Instant,
     is_connected: bool,
     worker_tx: Option<mpsc::Sender<WorkerRequest>>,
+    peak_height: Option<u32>,
 }
 
 enum PoolRequest {
@@ -59,6 +69,7 @@ impl ChiaPeerPool {
             peers: HashMap::new(),
             peer_ids: Vec::new(),
             current_index: 0,
+            highest_peak: None,
         }));
 
         let pool = Self {
@@ -66,6 +77,7 @@ impl ChiaPeerPool {
             request_sender,
             connected_callback: Arc::new(RwLock::new(None)),
             disconnected_callback: Arc::new(RwLock::new(None)),
+            new_peak_callback: Arc::new(RwLock::new(None)),
         };
 
         // Start the request processor
@@ -76,13 +88,15 @@ impl ChiaPeerPool {
 
     pub fn set_event_callbacks(
         &self,
-        connected: PeerConnectedCallback,
-        disconnected: PeerDisconnectedCallback,
+        connected_callback: PeerConnectedCallback,
+        disconnected_callback: PeerDisconnectedCallback,
+        new_peak_callback: NewPeakHeightCallback,
     ) {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
-            *self.connected_callback.write().await = Some(connected);
-            *self.disconnected_callback.write().await = Some(disconnected);
+            *self.connected_callback.write().await = Some(connected_callback);
+            *self.disconnected_callback.write().await = Some(disconnected_callback);
+            *self.new_peak_callback.write().await = Some(new_peak_callback);
         });
     }
 
@@ -96,23 +110,6 @@ impl ChiaPeerPool {
         }
     }
 
-    async fn emit_peer_disconnected(
-        &self,
-        peer_id: String,
-        host: String,
-        port: u16,
-        message: Option<String>,
-    ) {
-        if let Some(callback) = &*self.disconnected_callback.read().await {
-            callback(PeerDisconnectedEvent {
-                peer_id,
-                host,
-                port: port as u32,
-                message,
-            });
-        }
-    }
-
     pub async fn add_peer(
         &self,
         host: String,
@@ -122,7 +119,7 @@ impl ChiaPeerPool {
         info!("Adding peer to pool: {}:{}", host, port);
 
         let peer_connection = PeerConnection::new(host.clone(), port, network_id);
-        let peer_id = format!("{}:{}", host, port);
+        let peer_id = format!("{host}:{port}");
 
         // Create worker for this peer
         let (worker_tx, worker_rx) = mpsc::channel(10);
@@ -130,7 +127,9 @@ impl ChiaPeerPool {
         let peer_id_clone = peer_id.clone();
         let host_clone = host.clone();
         let disconnected_callback = self.disconnected_callback.clone();
+        let new_peak_callback = self.new_peak_callback.clone();
 
+        let inner_clone = self.inner.clone();
         tokio::spawn(async move {
             Self::peer_worker(
                 worker_rx,
@@ -139,6 +138,8 @@ impl ChiaPeerPool {
                 host_clone,
                 port,
                 disconnected_callback,
+                inner_clone,
+                new_peak_callback,
             )
             .await;
         });
@@ -147,12 +148,12 @@ impl ChiaPeerPool {
         guard.peers.insert(
             peer_id.clone(),
             PeerInfo {
-                connection: peer_connection,
                 last_used: Instant::now()
                     .checked_sub(Duration::from_millis(RATE_LIMIT_MS))
                     .unwrap_or(Instant::now()),
                 is_connected: true,
                 worker_tx: Some(worker_tx),
+                peak_height: None,
             },
         );
         guard.peer_ids.push(peer_id.clone());
@@ -212,6 +213,10 @@ impl ChiaPeerPool {
         Ok(guard.peer_ids.clone())
     }
 
+    pub async fn get_highest_peak(&self) -> Option<u32> {
+        self.inner.read().await.highest_peak
+    }
+
     fn start_request_processor(&self, mut receiver: mpsc::Receiver<PoolRequest>) {
         let inner = self.inner.clone();
 
@@ -256,12 +261,13 @@ impl ChiaPeerPool {
                                             let (worker_response_tx, worker_response_rx) =
                                                 oneshot::channel();
 
-                                            if let Err(_) = worker_tx
+                                            if worker_tx
                                                 .send(WorkerRequest::GetBlock {
                                                     height,
                                                     response_tx: worker_response_tx,
                                                 })
                                                 .await
+                                                .is_err()
                                             {
                                                 error!("Failed to send request to worker");
                                                 let _ =
@@ -288,10 +294,7 @@ impl ChiaPeerPool {
                                                             }
                                                             Err(e) => {
                                                                 let _ = response_tx.send(Err(
-                                                                    ChiaError::Protocol(format!(
-                                                                        "Failed to parse block: {}",
-                                                                        e
-                                                                    )),
+                                                                    ChiaError::Protocol(format!("Failed to parse block: {e}")),
                                                                 ));
                                                             }
                                                         }
@@ -339,6 +342,8 @@ impl ChiaPeerPool {
         host: String,
         port: u16,
         disconnected_callback: Arc<RwLock<Option<PeerDisconnectedCallback>>>,
+        inner: Arc<RwLock<ChiaPeerPoolInner>>,
+        new_peak_callback: Arc<RwLock<Option<NewPeakHeightCallback>>>,
     ) {
         info!("Starting worker for peer {}", peer_id);
 
@@ -365,16 +370,95 @@ impl ChiaPeerPool {
                                 .await
                             {
                                 Ok(block) => {
-                                    let _ = response_tx.send(Ok(block));
+                                    match BlockParser::new().parse_full_block(&block) {
+                                        Ok(parsed_block) => {
+                                            info!(
+                                                "Worker {} parsed block at height {}",
+                                                peer_id, parsed_block.height
+                                            );
+
+                                            // Update peak height for this peer if this is higher than what we've seen
+                                            let mut guard = inner.write().await;
+                                            if let Some(peer_info) = guard.peers.get_mut(&peer_id) {
+                                                match peer_info.peak_height {
+                                                    Some(current_peak) => {
+                                                        if parsed_block.height > current_peak {
+                                                            peer_info.peak_height =
+                                                                Some(parsed_block.height);
+                                                        }
+                                                    }
+                                                    None => {
+                                                        peer_info.peak_height =
+                                                            Some(parsed_block.height);
+                                                    }
+                                                }
+                                            }
+
+                                            // Update global highest peak
+                                            let old_peak = guard.highest_peak;
+                                            match guard.highest_peak {
+                                                Some(current_highest) => {
+                                                    if parsed_block.height > current_highest {
+                                                        guard.highest_peak =
+                                                            Some(parsed_block.height);
+                                                        info!(
+                                                            "New highest peak from block fetch: {}",
+                                                            parsed_block.height
+                                                        );
+                                                        drop(guard);
+
+                                                        // Emit new peak event
+                                                        if let Some(callback) =
+                                                            &*new_peak_callback.read().await
+                                                        {
+                                                            callback(NewPeakHeightEvent {
+                                                                old_peak,
+                                                                new_peak: parsed_block.height,
+                                                                peer_id: peer_id.clone(),
+                                                            });
+                                                        }
+                                                    } else {
+                                                        drop(guard);
+                                                    }
+                                                }
+                                                None => {
+                                                    guard.highest_peak = Some(parsed_block.height);
+                                                    info!(
+                                                        "Initial peak height from block fetch: {}",
+                                                        parsed_block.height
+                                                    );
+                                                    drop(guard);
+
+                                                    // Emit new peak event
+                                                    if let Some(callback) =
+                                                        &*new_peak_callback.read().await
+                                                    {
+                                                        callback(NewPeakHeightEvent {
+                                                            old_peak,
+                                                            new_peak: parsed_block.height,
+                                                            peer_id: peer_id.clone(),
+                                                        });
+                                                    }
+                                                }
+                                            }
+
+                                            let _ = response_tx.send(Ok(block));
+                                        }
+                                        Err(e) => {
+                                            let _ = response_tx.send(Err(ChiaError::Protocol(
+                                                format!("Failed to parse block: {e}"),
+                                            )));
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    error!("Failed to fetch block from {}: {}", peer_id, e);
+                                    error!("Failed to get block: {}", e);
                                     let _ = response_tx.send(Err(e));
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Failed to connect to peer {}: {}", peer_id, e);
+                            error!("Connection failed for {}: {}", peer_id, e);
                             let _ = response_tx.send(Err(e));
                         }
                     }

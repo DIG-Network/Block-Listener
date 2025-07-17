@@ -5,27 +5,34 @@ pub enum ChiaError {
     #[error("Connection error: {0}")]
     Connection(String),
 
-    #[error("Protocol error: {0}")]
-    Protocol(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
     #[error("TLS error: {0}")]
     Tls(String),
 
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("Protocol error: {0}")]
+    Protocol(String),
+
+    #[error("Handshake error: {0}")]
+    Handshake(String),
 
     #[error("WebSocket error: {0}")]
-    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocket(#[from] Box<tokio_tungstenite::tungstenite::Error>),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 
     #[error("Other error: {0}")]
     Other(String),
 }
 
+// Helper conversion for unboxed WebSocket errors
+impl From<tokio_tungstenite::tungstenite::Error> for ChiaError {
+    fn from(err: tokio_tungstenite::tungstenite::Error) -> Self {
+        ChiaError::WebSocket(Box::new(err))
+    }
+}
+
 impl From<ChiaError> for napi::Error {
     fn from(err: ChiaError) -> Self {
-        napi::Error::new(napi::Status::GenericFailure, err.to_string())
+        napi::Error::from_reason(err.to_string())
     }
 }

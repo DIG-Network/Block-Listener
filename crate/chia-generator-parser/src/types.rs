@@ -1,19 +1,17 @@
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-// Re-export proper Chia types
 pub use chia_protocol::{Bytes32, Coin};
 
 // Basic numeric types - use standard Rust types for simplicity
-pub type uint32 = u32;
-pub type uint64 = u64;
-pub type uint128 = u128;
+pub type Uint32 = u32;
+pub type Uint64 = u64;
+pub type Uint128 = u128;
 
 // SerializedProgram placeholder - use Vec<u8> for now
 pub type SerializedProgram = Vec<u8>;
 
 /// Block height reference  
-pub type BlockHeight = uint32;
+pub type BlockHeight = Uint32;
 
 /// Hash type (32 bytes) - using proper chia type
 pub type Hash32 = Bytes32;
@@ -50,26 +48,23 @@ pub struct ParsedBlock {
 
     /// Generator size in bytes
     pub generator_size: Option<u32>,
-
-    /// Generator block info (if present)
-    pub generator_info: Option<GeneratorBlockInfo>,
 }
 
-/// Basic coin information (serializable version)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Information about a coin (unspent transaction output)
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinInfo {
-    /// Parent coin info (32 bytes as hex)
+    /// Parent coin ID (hex string)
     pub parent_coin_info: String,
 
-    /// Puzzle hash (32 bytes as hex)
+    /// Puzzle hash (hex string)  
     pub puzzle_hash: String,
 
     /// Amount in mojos
-    pub amount: uint64,
+    pub amount: Uint64,
 }
 
 impl CoinInfo {
-    pub fn new(parent_coin_info: Hash32, puzzle_hash: Hash32, amount: uint64) -> Self {
+    pub fn new(parent_coin_info: Bytes32, puzzle_hash: Bytes32, amount: Uint64) -> Self {
         Self {
             parent_coin_info: hex::encode(parent_coin_info),
             puzzle_hash: hex::encode(puzzle_hash),
@@ -78,7 +73,7 @@ impl CoinInfo {
     }
 
     /// Create from raw bytes
-    pub fn from_bytes(parent_coin_info: &[u8], puzzle_hash: &[u8], amount: uint64) -> Self {
+    pub fn from_bytes(parent_coin_info: &[u8], puzzle_hash: &[u8], amount: Uint64) -> Self {
         Self {
             parent_coin_info: hex::encode(parent_coin_info),
             puzzle_hash: hex::encode(puzzle_hash),
@@ -87,26 +82,26 @@ impl CoinInfo {
     }
 }
 
-/// Detailed coin spend information extracted from generator
+/// Detailed coin spend information with transaction data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinSpendInfo {
     pub coin: CoinInfo,
-    pub puzzle_reveal: Vec<u8>,
-    pub solution: Vec<u8>,
+    pub puzzle_reveal: String,
+    pub solution: String,
     pub real_data: bool,
     pub parsing_method: String,
-    pub offset: u32,
+    pub offset: Uint32,
     pub created_coins: Vec<CoinInfo>,
 }
 
 impl CoinSpendInfo {
     pub fn new(
         coin: CoinInfo,
-        puzzle_reveal: Vec<u8>,
-        solution: Vec<u8>,
+        puzzle_reveal: String,
+        solution: String,
         real_data: bool,
         parsing_method: String,
-        offset: uint32,
+        offset: Uint32,
         created_coins: Vec<CoinInfo>,
     ) -> Self {
         Self {
@@ -121,11 +116,11 @@ impl CoinSpendInfo {
     }
 }
 
-/// Generator block information (internal representation with Bytes32)
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Information about a block's transactions generator
+#[derive(Debug, Clone)]
 pub struct GeneratorBlockInfo {
     /// Previous block header hash
-    pub prev_header_hash: Hash32,
+    pub prev_header_hash: Bytes32,
 
     /// The transactions generator program (CLVM bytecode)
     pub transactions_generator: Option<SerializedProgram>,
@@ -136,7 +131,7 @@ pub struct GeneratorBlockInfo {
 
 impl GeneratorBlockInfo {
     pub fn new(
-        prev_header_hash: Hash32,
+        prev_header_hash: Bytes32,
         transactions_generator: Option<SerializedProgram>,
         transactions_generator_ref_list: Vec<BlockHeight>,
     ) -> Self {
@@ -146,107 +141,20 @@ impl GeneratorBlockInfo {
             transactions_generator_ref_list,
         }
     }
-
-    pub fn has_generator(&self) -> bool {
-        self.transactions_generator.is_some()
-    }
-
-    pub fn generator_size(&self) -> usize {
-        self.transactions_generator
-            .as_ref()
-            .map(|g| g.len())
-            .unwrap_or(0)
-    }
-
-    pub fn ref_list_size(&self) -> usize {
-        self.transactions_generator_ref_list.len()
-    }
 }
 
-impl fmt::Display for GeneratorBlockInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "GeneratorBlockInfo {{ prev_header_hash: {}, has_generator: {}, ref_list_size: {} }}",
-            hex::encode(self.prev_header_hash),
-            self.has_generator(),
-            self.ref_list_size()
-        )
-    }
-}
-
-// Custom Serialize/Deserialize for GeneratorBlockInfo
-impl Serialize for GeneratorBlockInfo {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("GeneratorBlockInfo", 3)?;
-        state.serialize_field("prev_header_hash", &hex::encode(self.prev_header_hash))?;
-        state.serialize_field("transactions_generator", &self.transactions_generator)?;
-        state.serialize_field(
-            "transactions_generator_ref_list",
-            &self.transactions_generator_ref_list,
-        )?;
-        state.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for GeneratorBlockInfo {
-    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // Not needed for our use case, but required by trait
-        unimplemented!("Deserialization not implemented for GeneratorBlockInfo")
-    }
-}
-
-/// Parsed generator information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParsedGenerator {
-    /// The generator block information
-    pub block_info: GeneratorBlockInfo,
-
-    /// Raw generator bytecode as hex string
-    pub generator_hex: Option<String>,
-
-    /// Analysis information
-    pub analysis: GeneratorAnalysis,
-}
-
-/// Analysis of generator content
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeneratorAnalysis {
-    /// Size of the generator in bytes
-    pub size_bytes: usize,
-
-    /// Whether the generator is empty
-    pub is_empty: bool,
-
-    /// Whether it contains CLVM patterns
-    pub contains_clvm_patterns: bool,
-
-    /// Whether it contains coin patterns
-    pub contains_coin_patterns: bool,
-
-    /// Entropy of the bytecode
-    pub entropy: f64,
-}
-
-/// Block height and transaction status
+/// Information about a block's height and type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockHeightInfo {
     /// Block height
-    pub height: uint32,
+    pub height: Uint32,
 
     /// Whether this is a transaction block
     pub is_transaction_block: bool,
 }
 
 impl BlockHeightInfo {
-    pub fn new(height: uint32, is_transaction_block: bool) -> Self {
+    pub fn new(height: Uint32, is_transaction_block: bool) -> Self {
         Self {
             height,
             is_transaction_block,

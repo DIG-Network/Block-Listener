@@ -2,7 +2,6 @@ use crate::error::ChiaError;
 use crate::peer::PeerConnection;
 use chia_generator_parser::{types::ParsedBlock, BlockParser};
 
-use hex;
 use napi::{
     bindgen_prelude::*,
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
@@ -14,9 +13,11 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{error, info};
 
-// Event type constants
+#[allow(dead_code)]
 pub const EVENT_BLOCK_RECEIVED: &str = "blockReceived";
+#[allow(dead_code)]
 pub const EVENT_PEER_CONNECTED: &str = "peerConnected";
+#[allow(dead_code)]
 pub const EVENT_PEER_DISCONNECTED: &str = "peerDisconnected";
 
 // Export event types for TypeScript
@@ -28,6 +29,7 @@ pub struct EventTypes {
 }
 
 #[napi]
+#[allow(dead_code)]
 pub fn get_event_types() -> EventTypes {
     EventTypes {
         block_received: EVENT_BLOCK_RECEIVED.to_string(),
@@ -161,7 +163,6 @@ impl ChiaBlockListener {
             event_sender,
         }));
 
-        // Start event processing loop
         let inner_clone = inner.clone();
         tokio::spawn(async move {
             Self::event_loop(inner_clone, block_receiver, event_receiver).await;
@@ -472,7 +473,7 @@ impl ChiaBlockListener {
                     let mut obj = ctx.env.create_object()?;
                     obj.set_named_property("peerId", ctx.env.create_string(&event.peer_id)?)?;
                     obj.set_named_property("host", ctx.env.create_string(&event.host)?)?;
-                    obj.set_named_property("port", ctx.env.create_uint32(event.port as u32)?)?;
+                    obj.set_named_property("port", ctx.env.create_uint32(event.port)?)?;
                     Ok(vec![obj])
                 })?;
 
@@ -487,7 +488,7 @@ impl ChiaBlockListener {
                     let mut obj = ctx.env.create_object()?;
                     obj.set_named_property("peerId", ctx.env.create_string(&event.peer_id)?)?;
                     obj.set_named_property("host", ctx.env.create_string(&event.host)?)?;
-                    obj.set_named_property("port", ctx.env.create_uint32(event.port as u32)?)?;
+                    obj.set_named_property("port", ctx.env.create_uint32(event.port)?)?;
                     if let Some(msg) = &event.message {
                         obj.set_named_property("message", ctx.env.create_string(msg)?)?;
                     }
@@ -502,7 +503,7 @@ impl ChiaBlockListener {
             _ => {
                 return Err(Error::new(
                     Status::InvalidArg,
-                    format!("Unknown event type: {}", event),
+                    format!("Unknown event type: {event}"),
                 ))
             }
         }
@@ -527,7 +528,7 @@ impl ChiaBlockListener {
                 _ => {
                     return Err(Error::new(
                         Status::InvalidArg,
-                        format!("Unknown event type: {}", event),
+                        format!("Unknown event type: {event}"),
                     ))
                 }
             }
@@ -570,7 +571,7 @@ impl ChiaBlockListener {
                                 peer_id: peer_id.clone(),
                                 host: host.clone(),
                                 port,
-                                message: Some(format!("Handshake failed: {}", e)),
+                                message: Some(format!("Handshake failed: {e}")),
                             })
                             .await;
                         return;
@@ -690,7 +691,7 @@ impl ChiaBlockListener {
                             peer_id: peer_id.clone(),
                             host,
                             port,
-                            message: Some(format!("Connection failed: {}", e)),
+                            message: Some(format!("Connection failed: {e}")),
                         })
                         .await;
                 }
@@ -772,7 +773,7 @@ impl ChiaBlockListener {
                     Ok(mut ws_stream) => {
                         // Perform handshake
                         if let Err(e) = peer.handshake(&mut ws_stream).await {
-                            return Err(ChiaError::Protocol(format!("Handshake failed: {}", e)));
+                            return Err(ChiaError::Protocol(format!("Handshake failed: {e}")));
                         }
 
                         // Request the block
@@ -782,7 +783,7 @@ impl ChiaBlockListener {
                     Err(e) => Err(e),
                 }
             } else {
-                Err(ChiaError::Connection(format!("Peer {} not found", peer_id)))
+                Err(ChiaError::Connection(format!("Peer {peer_id} not found")))
             }
         });
 
@@ -793,7 +794,7 @@ impl ChiaBlockListener {
                 let parsed_block = parser.parse_full_block(&block).map_err(|e| {
                     Error::new(
                         Status::GenericFailure,
-                        format!("Failed to parse block: {}", e),
+                        format!("Failed to parse block: {e}"),
                     )
                 })?;
 
@@ -805,7 +806,7 @@ impl ChiaBlockListener {
             }
             Err(e) => Err(Error::new(
                 Status::GenericFailure,
-                format!("Failed to get block: {}", e),
+                format!("Failed to get block: {e}"),
             )),
         }
     }
@@ -837,5 +838,11 @@ impl ChiaBlockListener {
         }
 
         Ok(blocks)
+    }
+}
+
+impl Default for ChiaBlockListener {
+    fn default() -> Self {
+        Self::new()
     }
 }

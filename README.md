@@ -177,7 +177,15 @@ Shuts down the pool and disconnects all peers.
 
 ##### `getConnectedPeers(): Promise<string[]>`
 
-Returns a list of connected peer IDs.
+Gets the list of currently connected peer IDs.
+
+**Returns:** Array of peer ID strings (format: "host:port")
+
+##### `getPeakHeight(): Promise<number | null>`
+
+Gets the highest blockchain peak height seen across all connected peers.
+
+**Returns:** The highest peak height as a number, or null if no peaks have been received yet
 
 ##### `on(event, callback): void`
 
@@ -232,6 +240,12 @@ Fired when a peer is removed from the pool or disconnects.
 
 **Callback:** `(event: PeerDisconnectedEvent) => void`
 
+#### `newPeakHeight`
+
+Fired when a new highest blockchain peak is discovered.
+
+**Callback:** `(event: NewPeakHeightEvent) => void`
+
 ### Event Data Types
 
 #### `BlockReceivedEvent`
@@ -270,6 +284,16 @@ interface PeerDisconnectedEvent {
   host: string      // Peer hostname/IP
   port: number      // Peer port number
   message?: string  // Optional disconnection reason
+}
+```
+
+#### `NewPeakHeightEvent`
+
+```typescript
+interface NewPeakHeightEvent {
+  oldPeak: number | null  // Previous highest peak (null if first peak)
+  newPeak: number        // New highest peak height
+  peerId: string         // Peer that discovered this peak
 }
 ```
 
@@ -317,6 +341,13 @@ async function main() {
   
   pool.on('peerDisconnected', (event) => {
     console.log(`Peer disconnected from pool: ${event.peerId}`)
+  })
+  
+  pool.on('newPeakHeight', (event) => {
+    console.log(`New blockchain peak detected!`)
+    console.log(`  Previous: ${event.oldPeak || 'None'}`)
+    console.log(`  New: ${event.newPeak}`)
+    console.log(`  Discovered by: ${event.peerId}`)
   })
   
   // Add multiple peers
@@ -396,6 +427,46 @@ try {
 }
 ```
 
+#### Peak Height Tracking
+
+```javascript
+// Monitor blockchain sync progress
+const pool = new ChiaPeerPool()
+
+// Track peak changes
+let currentPeak = null
+pool.on('newPeakHeight', (event) => {
+  currentPeak = event.newPeak
+  const progress = event.oldPeak 
+    ? `+${event.newPeak - event.oldPeak} blocks` 
+    : 'Initial peak'
+  console.log(`Peak update: ${event.newPeak} (${progress})`)
+})
+
+// Add peers
+await pool.addPeer('node1.chia.net', 8444, 'mainnet')
+await pool.addPeer('node2.chia.net', 8444, 'mainnet')
+
+// Check current peak
+const peak = await pool.getPeakHeight()
+console.log(`Current highest peak: ${peak || 'None yet'}`)
+
+// Fetch some blocks to trigger peak updates
+await pool.getBlockByHeight(5000000)
+await pool.getBlockByHeight(5100000)
+await pool.getBlockByHeight(5200000)
+
+// Monitor sync status
+setInterval(async () => {
+  const peak = await pool.getPeakHeight()
+  if (peak) {
+    const estimatedCurrent = 5200000 + Math.floor((Date.now() / 1000 - 1700000000) / 18.75)
+    const syncPercentage = (peak / estimatedCurrent * 100).toFixed(2)
+    console.log(`Sync status: ${syncPercentage}% (peak: ${peak})`)
+  }
+}, 60000) // Check every minute
+```
+
 ### When to Use ChiaPeerPool vs ChiaBlockListener
 
 - **Use ChiaPeerPool when:**
@@ -421,6 +492,7 @@ import {
   BlockReceivedEvent, 
   PeerConnectedEvent, 
   PeerDisconnectedEvent,
+  NewPeakHeightEvent,
   CoinRecord,
   CoinSpend,
   initTracing,
@@ -490,13 +562,19 @@ pool.on('peerConnected', (event: PeerConnectedEvent) => {
   console.log(`Pool peer connected: ${event.peerId}`)
 })
 
+pool.on('newPeakHeight', (event: NewPeakHeightEvent) => {
+  console.log(`New peak: ${event.oldPeak} → ${event.newPeak}`)
+})
+
 // Async/await with proper typing
 async function fetchHistoricalData() {
   const block: BlockReceivedEvent = await pool.getBlockByHeight(5000000)
   const peers: string[] = await pool.getConnectedPeers()
+  const peak: number | null = await pool.getPeakHeight()
   
   console.log(`Block ${block.height} has ${block.coinSpends.length} spends`)
   console.log(`Pool has ${peers.length} active peers`)
+  console.log(`Current peak: ${peak || 'No peak yet'}`)
 }
 ```
 

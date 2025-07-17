@@ -1,9 +1,6 @@
 use crate::{
     error::{GeneratorParserError, Result},
-    types::{
-        BlockHeightInfo, CoinInfo, CoinSpendInfo, GeneratorAnalysis, GeneratorBlockInfo,
-        ParsedBlock, ParsedGenerator,
-    },
+    types::{BlockHeightInfo, CoinInfo, CoinSpendInfo, GeneratorBlockInfo, ParsedBlock},
 };
 use chia_bls::Signature;
 use chia_consensus::{
@@ -14,7 +11,7 @@ use chia_consensus::{
     run_block_generator::{run_block_generator2, setup_generator_args},
     validation_error::{atom, first, next, rest, ErrorCode},
 };
-use chia_protocol::{Bytes32, FullBlock};
+use chia_protocol::FullBlock;
 use chia_traits::streamable::Streamable;
 use clvm_utils::tree_hash;
 use clvmr::{
@@ -63,7 +60,7 @@ impl BlockParser {
             .map(|g| g.len() as u32);
 
         // Extract generator info
-        let generator_info = block
+        let _generator_info = block
             .transactions_generator
             .as_ref()
             .map(|gen| GeneratorBlockInfo {
@@ -101,7 +98,6 @@ impl BlockParser {
             coin_creations,
             has_transactions_generator,
             generator_size,
-            generator_info,
         })
     }
 
@@ -373,15 +369,15 @@ impl BlockParser {
         // Get created coins from conditions
         let created_coins = self.extract_created_coins(spend_index, spend_bundle_conditions);
 
-        Some(CoinSpendInfo {
-            coin: coin_info,
-            puzzle_reveal,
-            solution: solution_bytes,
-            real_data: true,
-            parsing_method: "clvm_execution".to_string(),
-            offset: 0,
+        Some(CoinSpendInfo::new(
+            coin_info,
+            hex::encode(puzzle_reveal),
+            hex::encode(solution_bytes),
+            true,
+            "From transaction generator".to_string(),
+            0,
             created_coins,
-        })
+        ))
     }
 
     /// Extract parent coin info from a coin spend node
@@ -464,42 +460,62 @@ impl BlockParser {
         })
     }
 
+    /*
     /// Parse generator from hex string
     pub fn parse_generator_from_hex(&self, generator_hex: &str) -> Result<ParsedGenerator> {
         let generator_bytes =
-            hex::decode(generator_hex).map_err(|e| GeneratorParserError::HexDecodingError(e))?;
+            hex::decode(generator_hex).map_err(|e| ParseError::HexDecodingError(e))?;
         self.parse_generator_from_bytes(&generator_bytes)
     }
 
     /// Parse generator from bytes
     pub fn parse_generator_from_bytes(&self, generator_bytes: &[u8]) -> Result<ParsedGenerator> {
-        let analysis = self.analyze_generator(generator_bytes)?;
-
+        // Create a dummy GeneratorBlockInfo for now
         Ok(ParsedGenerator {
-            block_info: GeneratorBlockInfo {
-                prev_header_hash: Bytes32::default(),
-                transactions_generator: Some(generator_bytes.to_vec()),
-                transactions_generator_ref_list: Vec::new(),
-            },
+            block_info: GeneratorBlockInfo::new(
+                [0u8; 32].into(),
+                Some(generator_bytes.to_vec()),
+                vec![],
+            ),
             generator_hex: Some(hex::encode(generator_bytes)),
-            analysis,
+            analysis: self.analyze_generator(generator_bytes)?,
         })
     }
 
     /// Analyze generator bytecode
     pub fn analyze_generator(&self, generator_bytes: &[u8]) -> Result<GeneratorAnalysis> {
         let size_bytes = generator_bytes.len();
-        let is_empty = size_bytes == 0;
+        let is_empty = generator_bytes.is_empty();
 
-        // Check for CLVM patterns
-        let contains_clvm_patterns = generator_bytes
-            .windows(2)
-            .any(|w| matches!(w, [0xff, _] | [_, 0xff]));
+        // Check for common CLVM patterns
+        let contains_clvm_patterns = generator_bytes.windows(2).any(|w| {
+            w == [0x01, 0x00] || // pair
+            w == [0x02, 0x00] || // cons
+            w == [0x03, 0x00] || // first
+            w == [0x04, 0x00]    // rest
+        });
 
-        // Check for coin patterns (CREATE_COIN opcode)
-        let contains_coin_patterns = generator_bytes.windows(1).any(|w| w[0] == 0x33);
+        // Check for coin patterns (32-byte sequences)
+        let contains_coin_patterns = generator_bytes.len() >= 32;
 
-        let entropy = self.calculate_entropy(generator_bytes);
+        // Calculate simple entropy
+        let mut byte_counts = [0u64; 256];
+        for &byte in generator_bytes {
+            byte_counts[byte as usize] += 1;
+        }
+
+        let total = generator_bytes.len() as f64;
+        let entropy = if total > 0.0 {
+            byte_counts.iter()
+                .filter(|&&count| count > 0)
+                .map(|&count| {
+                    let p = count as f64 / total;
+                    -p * p.log2()
+                })
+                .sum()
+        } else {
+            0.0
+        };
 
         Ok(GeneratorAnalysis {
             size_bytes,
@@ -509,8 +525,10 @@ impl BlockParser {
             entropy,
         })
     }
+    */
 
     /// Calculate Shannon entropy of data
+    #[allow(dead_code)]
     fn calculate_entropy(&self, data: &[u8]) -> f64 {
         if data.is_empty() {
             return 0.0;

@@ -67,7 +67,7 @@ impl PeerConnection {
 
         let (ws_stream, _) = connect_async_tls_with_config(&url, None, false, Some(connector))
             .await
-            .map_err(ChiaError::WebSocket)?;
+            .map_err(|e| ChiaError::WebSocket(Box::new(e)))?;
 
         info!("WebSocket connection established to {}", self.host);
         Ok(ws_stream)
@@ -93,7 +93,7 @@ impl PeerConnection {
         // Serialize and send handshake
         let handshake_bytes = handshake
             .to_bytes()
-            .map_err(|e| ChiaError::Serialization(e.to_string()))?;
+            .map_err(|e| ChiaError::Protocol(e.to_string()))?;
 
         let message = chia_protocol::Message {
             msg_type: ProtocolMessageTypes::Handshake,
@@ -108,7 +108,7 @@ impl PeerConnection {
         ws_stream
             .send(WsMessage::Binary(message_bytes))
             .await
-            .map_err(ChiaError::WebSocket)?;
+            .map_err(|e| ChiaError::WebSocket(Box::new(e)))?;
 
         // Wait for peer's handshake
         if let Some(msg) = ws_stream.next().await {
@@ -152,7 +152,7 @@ impl PeerConnection {
                     "Peer closed connection during handshake".to_string(),
                 )),
                 Ok(_) => Err(ChiaError::Protocol("Unexpected message type".to_string())),
-                Err(e) => Err(ChiaError::WebSocket(e)),
+                Err(e) => Err(ChiaError::WebSocket(Box::new(e))),
             }
         } else {
             Err(ChiaError::Connection(
@@ -274,7 +274,7 @@ impl PeerConnection {
                 }
                 Err(e) => {
                     error!("WebSocket error: {}", e);
-                    return Err(ChiaError::WebSocket(e));
+                    return Err(ChiaError::WebSocket(Box::new(e)));
                 }
             }
         }
@@ -322,7 +322,7 @@ impl PeerConnection {
 
         let request_bytes = request
             .to_bytes()
-            .map_err(|e| ChiaError::Serialization(e.to_string()))?;
+            .map_err(|e| ChiaError::Protocol(e.to_string()))?;
 
         let request_msg = chia_protocol::Message {
             msg_type: ProtocolMessageTypes::RequestBlock,
@@ -332,12 +332,12 @@ impl PeerConnection {
 
         let request_bytes = request_msg
             .to_bytes()
-            .map_err(|e| ChiaError::Serialization(e.to_string()))?;
+            .map_err(|e| ChiaError::Protocol(e.to_string()))?;
 
         ws_stream
             .send(WsMessage::Binary(request_bytes))
             .await
-            .map_err(ChiaError::WebSocket)?;
+            .map_err(|e| ChiaError::WebSocket(Box::new(e)))?;
 
         // Wait for the response, handling other messages in between
         let mut attempts = 0;
@@ -423,7 +423,7 @@ impl PeerConnection {
                     }
                     Err(e) => {
                         error!("WebSocket error: {}", e);
-                        return Err(ChiaError::WebSocket(e));
+                        return Err(ChiaError::WebSocket(Box::new(e)));
                     }
                 }
             } else {
