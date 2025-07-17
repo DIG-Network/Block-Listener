@@ -1,11 +1,11 @@
 use crate::event_emitter::{BlockReceivedEvent, PeerConnectedEvent, PeerDisconnectedEvent};
 use crate::peer_pool::ChiaPeerPool as InternalPeerPool;
 use napi::bindgen_prelude::*;
-use napi_derive::napi;
 use napi::{
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
     JsFunction,
 };
+use napi_derive::napi;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -18,7 +18,8 @@ pub struct ChiaPeerPool {
 
 struct EventListeners {
     peer_connected_listeners: Vec<ThreadsafeFunction<PeerConnectedEvent, ErrorStrategy::Fatal>>,
-    peer_disconnected_listeners: Vec<ThreadsafeFunction<PeerDisconnectedEvent, ErrorStrategy::Fatal>>,
+    peer_disconnected_listeners:
+        Vec<ThreadsafeFunction<PeerDisconnectedEvent, ErrorStrategy::Fatal>>,
 }
 
 #[napi]
@@ -30,13 +31,13 @@ impl ChiaPeerPool {
             peer_connected_listeners: Vec::new(),
             peer_disconnected_listeners: Vec::new(),
         }));
-        
+
         let pool = Arc::new(InternalPeerPool::new());
-        
+
         // Set event callbacks on the pool
         let listeners_connected = listeners.clone();
         let listeners_disconnected = listeners.clone();
-        
+
         pool.set_event_callbacks(
             Box::new(move |event| {
                 let listeners = listeners_connected.clone();
@@ -57,48 +58,61 @@ impl ChiaPeerPool {
                 });
             }),
         );
-        
-        Self {
-            pool,
-            listeners,
-        }
+
+        Self { pool, listeners }
     }
-    
+
     #[napi]
     pub async fn add_peer(&self, host: String, port: u16, network_id: String) -> Result<String> {
-        self.pool.add_peer(host, port, network_id)
+        self.pool
+            .add_peer(host, port, network_id)
             .await
             .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to add peer: {}", e)))
     }
-    
+
     #[napi]
     pub async fn get_block_by_height(&self, height: u32) -> Result<BlockReceivedEvent> {
-        self.pool.get_block_by_height(height as u64)
+        self.pool
+            .get_block_by_height(height as u64)
             .await
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get block: {}", e)))
+            .map_err(|e| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Failed to get block: {}", e),
+                )
+            })
     }
-    
+
     #[napi]
     pub async fn remove_peer(&self, peer_id: String) -> Result<bool> {
-        self.pool.remove_peer(peer_id)
-            .await
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to remove peer: {}", e)))
+        self.pool.remove_peer(peer_id).await.map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to remove peer: {}", e),
+            )
+        })
     }
-    
+
     #[napi]
     pub async fn shutdown(&self) -> Result<()> {
-        self.pool.shutdown()
-            .await
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to shutdown pool: {}", e)))
+        self.pool.shutdown().await.map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to shutdown pool: {}", e),
+            )
+        })
     }
-    
+
     #[napi]
     pub async fn get_connected_peers(&self) -> Result<Vec<String>> {
-        self.pool.get_connected_peers()
-            .await
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get connected peers: {}", e)))
+        self.pool.get_connected_peers().await.map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to get connected peers: {}", e),
+            )
+        })
     }
-    
+
     #[napi]
     pub fn on(&self, event: String, callback: JsFunction) -> Result<()> {
         let rt = tokio::runtime::Handle::current();
@@ -170,4 +184,4 @@ impl ChiaPeerPool {
 
         Ok(())
     }
-} 
+}

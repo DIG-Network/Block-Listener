@@ -1,6 +1,8 @@
 use crate::error::ChiaError;
+use crate::event_emitter::{
+    BlockReceivedEvent, ChiaBlockListener, PeerConnectedEvent, PeerDisconnectedEvent,
+};
 use crate::peer::PeerConnection;
-use crate::event_emitter::{BlockReceivedEvent, ChiaBlockListener, PeerConnectedEvent, PeerDisconnectedEvent};
 use chia_generator_parser::parser::BlockParser;
 use chia_protocol::FullBlock;
 use std::collections::{HashMap, VecDeque};
@@ -68,10 +70,10 @@ impl ChiaPeerPool {
 
         // Start the request processor
         pool.start_request_processor(request_receiver);
-        
+
         pool
     }
-    
+
     pub fn set_event_callbacks(
         &self,
         connected: PeerConnectedCallback,
@@ -83,7 +85,7 @@ impl ChiaPeerPool {
             *self.disconnected_callback.write().await = Some(disconnected);
         });
     }
-    
+
     async fn emit_peer_connected(&self, peer_id: String, host: String, port: u16) {
         if let Some(callback) = &*self.connected_callback.read().await {
             callback(PeerConnectedEvent {
@@ -93,8 +95,14 @@ impl ChiaPeerPool {
             });
         }
     }
-    
-    async fn emit_peer_disconnected(&self, peer_id: String, host: String, port: u16, message: Option<String>) {
+
+    async fn emit_peer_disconnected(
+        &self,
+        peer_id: String,
+        host: String,
+        port: u16,
+        message: Option<String>,
+    ) {
         if let Some(callback) = &*self.disconnected_callback.read().await {
             callback(PeerDisconnectedEvent {
                 peer_id,
@@ -105,106 +113,124 @@ impl ChiaPeerPool {
         }
     }
 
-    pub async fn add_peer(&self, host: String, port: u16, network_id: String) -> Result<String, ChiaError> {
+    pub async fn add_peer(
+        &self,
+        host: String,
+        port: u16,
+        network_id: String,
+    ) -> Result<String, ChiaError> {
         info!("Adding peer to pool: {}:{}", host, port);
-        
+
         let peer_connection = PeerConnection::new(host.clone(), port, network_id);
         let peer_id = format!("{}:{}", host, port);
-        
+
         // Create worker for this peer
         let (worker_tx, worker_rx) = mpsc::channel(10);
         let peer_conn_clone = peer_connection.clone();
         let peer_id_clone = peer_id.clone();
         let host_clone = host.clone();
         let disconnected_callback = self.disconnected_callback.clone();
-        
+
         tokio::spawn(async move {
-            Self::peer_worker(worker_rx, peer_conn_clone, peer_id_clone, host_clone, port, disconnected_callback).await;
+            Self::peer_worker(
+                worker_rx,
+                peer_conn_clone,
+                peer_id_clone,
+                host_clone,
+                port,
+                disconnected_callback,
+            )
+            .await;
         });
-        
+
         let mut guard = self.inner.write().await;
         guard.peers.insert(
             peer_id.clone(),
             PeerInfo {
                 connection: peer_connection,
-                last_used: Instant::now().checked_sub(Duration::from_millis(RATE_LIMIT_MS)).unwrap_or(Instant::now()),
+                last_used: Instant::now()
+                    .checked_sub(Duration::from_millis(RATE_LIMIT_MS))
+                    .unwrap_or(Instant::now()),
                 is_connected: true,
                 worker_tx: Some(worker_tx),
             },
         );
         guard.peer_ids.push(peer_id.clone());
-        
+
         // Emit connected event
         self.emit_peer_connected(peer_id.clone(), host, port).await;
-        
+
         Ok(peer_id)
     }
-    
+
     pub async fn get_block_by_height(&self, height: u64) -> Result<BlockReceivedEvent, ChiaError> {
         let (response_tx, response_rx) = oneshot::channel();
-        
+
         self.request_sender
-            .send(PoolRequest::GetBlockByHeight { height, response_tx })
+            .send(PoolRequest::GetBlockByHeight {
+                height,
+                response_tx,
+            })
             .await
             .map_err(|_| ChiaError::Connection("Failed to send request to pool".to_string()))?;
-            
-        response_rx
-            .await
-            .map_err(|_| ChiaError::Connection("Failed to receive response from pool".to_string()))?
+
+        response_rx.await.map_err(|_| {
+            ChiaError::Connection("Failed to receive response from pool".to_string())
+        })?
     }
-    
+
     pub async fn remove_peer(&self, peer_id: String) -> Result<bool, ChiaError> {
         let mut guard = self.inner.write().await;
-        
+
         if let Some(mut peer_info) = guard.peers.remove(&peer_id) {
             if let Some(worker_tx) = peer_info.worker_tx.take() {
                 let _ = worker_tx.send(WorkerRequest::Shutdown).await;
             }
-            
+
             guard.peer_ids.retain(|id| id != &peer_id);
             Ok(true)
         } else {
             Ok(false)
         }
     }
-    
+
     pub async fn shutdown(&self) -> Result<(), ChiaError> {
         let mut guard = self.inner.write().await;
-        
+
         for (_, mut peer_info) in guard.peers.drain() {
             if let Some(worker_tx) = peer_info.worker_tx.take() {
                 let _ = worker_tx.send(WorkerRequest::Shutdown).await;
             }
         }
-        
+
         guard.peer_ids.clear();
         Ok(())
     }
-    
+
     pub async fn get_connected_peers(&self) -> Result<Vec<String>, ChiaError> {
         let guard = self.inner.read().await;
         Ok(guard.peer_ids.clone())
     }
-    
+
     fn start_request_processor(&self, mut receiver: mpsc::Receiver<PoolRequest>) {
         let inner = self.inner.clone();
-        
+
         tokio::spawn(async move {
             let mut request_queue: VecDeque<PoolRequest> = VecDeque::new();
-            
+
             loop {
                 // Try to process queued requests
                 if !request_queue.is_empty() {
                     let mut guard = inner.write().await;
-                    
+
                     // Find an available peer
                     let now = Instant::now();
                     let mut available_peer = None;
-                    
+
                     for _ in 0..guard.peer_ids.len() {
                         let peer_id = guard.peer_ids[guard.current_index].clone();
                         guard.current_index = (guard.current_index + 1) % guard.peer_ids.len();
-                        
+
                         if let Some(peer_info) = guard.peers.get(&peer_id) {
                             if peer_info.is_connected {
                                 let time_since_last_use = now.duration_since(peer_info.last_used);
@@ -215,17 +241,21 @@ impl ChiaPeerPool {
                             }
                         }
                     }
-                    
+
                     if let Some(peer_id) = available_peer {
                         if let Some(request) = request_queue.pop_front() {
                             if let Some(peer_info) = guard.peers.get_mut(&peer_id) {
                                 peer_info.last_used = now;
-                                
+
                                 match request {
-                                    PoolRequest::GetBlockByHeight { height, response_tx } => {
+                                    PoolRequest::GetBlockByHeight {
+                                        height,
+                                        response_tx,
+                                    } => {
                                         if let Some(worker_tx) = &peer_info.worker_tx {
-                                            let (worker_response_tx, worker_response_rx) = oneshot::channel();
-                                            
+                                            let (worker_response_tx, worker_response_rx) =
+                                                oneshot::channel();
+
                                             if let Err(_) = worker_tx
                                                 .send(WorkerRequest::GetBlock {
                                                     height,
@@ -234,12 +264,13 @@ impl ChiaPeerPool {
                                                 .await
                                             {
                                                 error!("Failed to send request to worker");
-                                                let _ = response_tx.send(Err(ChiaError::Connection(
-                                                    "Worker channel closed".to_string(),
-                                                )));
+                                                let _ =
+                                                    response_tx.send(Err(ChiaError::Connection(
+                                                        "Worker channel closed".to_string(),
+                                                    )));
                                                 continue;
                                             }
-                                            
+
                                             // Process response in background
                                             tokio::spawn(async move {
                                                 match worker_response_rx.await {
@@ -252,12 +283,16 @@ impl ChiaPeerPool {
                                                                     &parsed_block,
                                                                     peer_id,
                                                                 );
-                                                                let _ = response_tx.send(Ok(block_event));
+                                                                let _ = response_tx
+                                                                    .send(Ok(block_event));
                                                             }
                                                             Err(e) => {
-                                                                let _ = response_tx.send(Err(ChiaError::Protocol(
-                                                                    format!("Failed to parse block: {}", e),
-                                                                )));
+                                                                let _ = response_tx.send(Err(
+                                                                    ChiaError::Protocol(format!(
+                                                                        "Failed to parse block: {}",
+                                                                        e
+                                                                    )),
+                                                                ));
                                                             }
                                                         }
                                                     }
@@ -265,9 +300,12 @@ impl ChiaPeerPool {
                                                         let _ = response_tx.send(Err(e));
                                                     }
                                                     Err(_) => {
-                                                        let _ = response_tx.send(Err(ChiaError::Connection(
-                                                            "Worker dropped response".to_string(),
-                                                        )));
+                                                        let _ = response_tx.send(Err(
+                                                            ChiaError::Connection(
+                                                                "Worker dropped response"
+                                                                    .to_string(),
+                                                            ),
+                                                        ));
                                                     }
                                                 }
                                             });
@@ -277,10 +315,10 @@ impl ChiaPeerPool {
                             }
                         }
                     }
-                    
+
                     drop(guard);
                 }
-                
+
                 // Check for new requests or wait
                 tokio::select! {
                     Some(request) = receiver.recv() => {
@@ -293,7 +331,7 @@ impl ChiaPeerPool {
             }
         });
     }
-    
+
     async fn peer_worker(
         mut receiver: mpsc::Receiver<WorkerRequest>,
         peer_connection: PeerConnection,
@@ -303,12 +341,15 @@ impl ChiaPeerPool {
         disconnected_callback: Arc<RwLock<Option<PeerDisconnectedCallback>>>,
     ) {
         info!("Starting worker for peer {}", peer_id);
-        
+
         while let Some(request) = receiver.recv().await {
             match request {
-                WorkerRequest::GetBlock { height, response_tx } => {
+                WorkerRequest::GetBlock {
+                    height,
+                    response_tx,
+                } => {
                     debug!("Worker {} fetching block at height {}", peer_id, height);
-                    
+
                     // Create a new connection for this request
                     match peer_connection.connect().await {
                         Ok(mut ws_stream) => {
@@ -318,8 +359,11 @@ impl ChiaPeerPool {
                                 let _ = response_tx.send(Err(e));
                                 continue;
                             }
-                            
-                            match peer_connection.request_block_by_height(height, &mut ws_stream).await {
+
+                            match peer_connection
+                                .request_block_by_height(height, &mut ws_stream)
+                                .await
+                            {
                                 Ok(block) => {
                                     let _ = response_tx.send(Ok(block));
                                 }
@@ -341,7 +385,7 @@ impl ChiaPeerPool {
                 }
             }
         }
-        
+
         // Emit disconnected event when worker shuts down
         if let Some(callback) = &*disconnected_callback.read().await {
             callback(PeerDisconnectedEvent {
@@ -352,4 +396,4 @@ impl ChiaPeerPool {
             });
         }
     }
-} 
+}
