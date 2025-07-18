@@ -37,6 +37,7 @@ dirs = "5"
 
 # Local crates
 chia-generator-parser = { path = "./crate/chia-generator-parser" }
+dns-discovery = { path = "./crate/dns-discovery" }
 
 [build-dependencies]
 napi-build = "2"

@@ -2,6 +2,7 @@
 
 use napi_derive::napi;
 
+mod dns_discovery_napi;
 mod error;
 mod event_emitter;
 mod peer;
@@ -10,6 +11,7 @@ mod peer_pool_napi;
 mod protocol;
 mod tls;
 
+pub use dns_discovery_napi::DnsDiscoveryClient;
 pub use event_emitter::ChiaBlockListener;
 pub use peer_pool_napi::ChiaPeerPool;
 

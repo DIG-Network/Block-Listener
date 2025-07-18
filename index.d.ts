@@ -45,9 +45,28 @@ export interface CoinSpend {
   offset: number
 }
 export interface NewPeakHeightEvent {
-  oldPeak?: number | null
+  oldPeak?: number
   newPeak: number
   peerId: string
+}
+export interface DnsDiscoveryErrorInfo {
+  message: string
+  errorType: string
+}
+export interface PeerAddressJs {
+  host: string
+  port: number
+  isIpv6: boolean
+  displayAddress: string
+}
+export interface DiscoveryResultJs {
+  ipv4Peers: Array<PeerAddressJs>
+  ipv6Peers: Array<PeerAddressJs>
+  totalCount: number
+}
+export interface AddressResult {
+  addresses: Array<string>
+  count: number
 }
 export declare function initTracing(): void
 export declare class ChiaBlockListener {
@@ -56,7 +75,7 @@ export declare class ChiaBlockListener {
   disconnectPeer(peerId: string): boolean
   disconnectAllPeers(): void
   getConnectedPeers(): Array<string>
-  // Typed event method overloads
+  // Typed event method overloads for ChiaBlockListener
 
   on(event: 'blockReceived', callback: (event: BlockReceivedEvent) => void): void
 
@@ -84,12 +103,35 @@ export declare class ChiaPeerPool {
   getConnectedPeers(): Promise<Array<string>>
   getPeakHeight(): Promise<number | null>
   // Typed event method overloads for ChiaPeerPool
+
   on(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+
   on(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+
   on(event: 'newPeakHeight', callback: (event: NewPeakHeightEvent) => void): void
+
   on(event: string, callback: (...args: any[]) => any): void
   off(event: 'peerConnected', callback: (event: PeerConnectedEvent) => void): void
+
   off(event: 'peerDisconnected', callback: (event: PeerDisconnectedEvent) => void): void
+
   off(event: 'newPeakHeight', callback: (event: NewPeakHeightEvent) => void): void
+
   off(event: string, callback: (...args: any[]) => any): void
+}
+export declare class DnsDiscoveryClient {
+  /** Create a new DNS discovery client */
+  constructor()
+  /** Discover peers for Chia mainnet */
+  discoverMainnetPeers(): Promise<DiscoveryResultJs>
+  /** Discover peers for Chia testnet11 */
+  discoverTestnet11Peers(): Promise<DiscoveryResultJs>
+  /** Discover peers using custom introducers */
+  discoverPeers(introducers: Array<string>, defaultPort: number): Promise<DiscoveryResultJs>
+  /** Resolve IPv4 addresses (A records) for a hostname */
+  resolveIpv4(hostname: string): Promise<AddressResult>
+  /** Resolve IPv6 addresses (AAAA records) for a hostname */
+  resolveIpv6(hostname: string): Promise<AddressResult>
+  /** Resolve both IPv4 and IPv6 addresses for a hostname */
+  resolveBoth(hostname: string, port: number): Promise<DiscoveryResultJs>
 }

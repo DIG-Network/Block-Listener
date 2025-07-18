@@ -14,7 +14,7 @@ A high-performance Chia blockchain listener for Node.js, built with Rust and NAP
 - **Historical Block Access**: Retrieve blocks by height or ranges with automatic load balancing
 - **Connection Pool**: ChiaPeerPool provides automatic load balancing and rate limiting for historical queries
 - **Peak Height Tracking**: Monitor blockchain sync progress across all connected peers
-- **DNS Peer Discovery**: Automatic peer discovery using Chia network DNS introducers
+- **DNS Peer Discovery**: Automatic peer discovery using Chia network DNS introducers with IPv4/IPv6 support
 - **Cross-platform Support**: Works on Windows, macOS, and Linux (x64 and ARM64)
 - **TypeScript Support**: Complete TypeScript definitions with IntelliSense
 
@@ -249,6 +249,70 @@ Fired when a new highest blockchain peak is discovered.
 
 **Callback:** `(event: NewPeakHeightEvent) => void`
 
+### DnsDiscoveryClient Class
+
+The `DnsDiscoveryClient` provides automatic peer discovery using Chia network DNS introducers with full IPv4 and IPv6 support.
+
+#### Constructor
+
+```javascript
+const client = new DnsDiscoveryClient()
+```
+
+Creates a new DNS discovery client instance.
+
+#### Methods
+
+##### `discoverMainnetPeers(): Promise<DiscoveryResultJS>`
+
+Discovers peers for Chia mainnet using built-in DNS introducers.
+
+**Returns:** Promise resolving to discovery results with separate IPv4 and IPv6 peer lists
+
+##### `discoverTestnet11Peers(): Promise<DiscoveryResultJS>`
+
+Discovers peers for Chia testnet11 using built-in DNS introducers.
+
+**Returns:** Promise resolving to discovery results
+
+##### `discoverPeers(introducers, port): Promise<DiscoveryResultJS>`
+
+Discovers peers using custom DNS introducers.
+
+**Parameters:**
+- `introducers` (string[]): Array of DNS introducer hostnames
+- `port` (number): Default port for discovered peers
+
+**Returns:** Promise resolving to discovery results
+
+##### `resolveIpv4(hostname): Promise<AddressResult>`
+
+Resolves IPv4 addresses (A records) for a hostname.
+
+**Parameters:**
+- `hostname` (string): Hostname to resolve
+
+**Returns:** Promise resolving to IPv4 addresses
+
+##### `resolveIpv6(hostname): Promise<AddressResult>`
+
+Resolves IPv6 addresses (AAAA records) for a hostname.
+
+**Parameters:**
+- `hostname` (string): Hostname to resolve
+
+**Returns:** Promise resolving to IPv6 addresses
+
+##### `resolveBoth(hostname, port): Promise<DiscoveryResultJS>`
+
+Resolves both IPv4 and IPv6 addresses for a hostname.
+
+**Parameters:**
+- `hostname` (string): Hostname to resolve
+- `port` (number): Port for the peer addresses
+
+**Returns:** Promise resolving to discovery results
+
 ### Event Data Types
 
 #### `BlockReceivedEvent`
@@ -318,6 +382,36 @@ interface CoinSpend {
   puzzleReveal: string    // CLVM puzzle bytecode (hex)
   solution: string         // CLVM solution bytecode (hex)
   offset: number           // Offset in the generator bytecode
+}
+```
+
+#### `DiscoveryResultJS`
+
+```typescript
+interface DiscoveryResultJS {
+  ipv4Peers: PeerAddressJS[]    // IPv4 peer addresses
+  ipv6Peers: PeerAddressJS[]    // IPv6 peer addresses  
+  totalCount: number            // Total peers found
+}
+```
+
+#### `PeerAddressJS`
+
+```typescript
+interface PeerAddressJS {
+  host: string           // IP address as string
+  port: number           // Port number
+  isIpv6: boolean        // Protocol indicator
+  displayAddress: string // Formatted for display/URLs
+}
+```
+
+#### `AddressResult`
+
+```typescript
+interface AddressResult {
+  addresses: string[]    // List of IP addresses
+  count: number          // Number of addresses
 }
 ```
 
@@ -524,16 +618,159 @@ setInterval(async () => {
 
 Both classes can be used together in the same application for different purposes.
 
+## DNS Discovery Usage
+
+The `DnsDiscoveryClient` enables automatic discovery of Chia network peers using DNS introducers, with full support for both IPv4 and IPv6 addresses.
+
+### Basic DNS Discovery
+
+```javascript
+const { DnsDiscoveryClient, initTracing } = require('@dignetwork/chia-block-listener')
+
+async function discoverPeers() {
+  // Initialize tracing
+  initTracing()
+  
+  // Create DNS discovery client
+  const client = new DnsDiscoveryClient()
+  
+  // Discover mainnet peers
+  const result = await client.discoverMainnetPeers()
+  
+  console.log(`Found ${result.totalCount} total peers:`)
+  console.log(`  IPv4 peers: ${result.ipv4Peers.length}`)
+  console.log(`  IPv6 peers: ${result.ipv6Peers.length}`)
+  
+  // Use with peer connections
+  for (const peer of result.ipv4Peers.slice(0, 3)) {
+    console.log(`IPv4 peer: ${peer.displayAddress}`)
+    // peer.host and peer.port can be used with addPeer()
+  }
+  
+  for (const peer of result.ipv6Peers.slice(0, 3)) {
+    console.log(`IPv6 peer: ${peer.displayAddress}`) // [2001:db8::1]:8444
+    // IPv6 addresses are properly formatted with brackets
+  }
+}
+
+discoverPeers().catch(console.error)
+```
+
+### Integration with Peer Pool
+
+```javascript
+const { ChiaPeerPool, DnsDiscoveryClient } = require('@dignetwork/chia-block-listener')
+
+async function setupPoolWithDnsDiscovery() {
+  const pool = new ChiaPeerPool()
+  const discovery = new DnsDiscoveryClient()
+  
+  // Discover peers automatically
+  const peers = await discovery.discoverMainnetPeers()
+  
+  // Add discovered peers to pool (both IPv4 and IPv6)
+  const allPeers = [...peers.ipv4Peers, ...peers.ipv6Peers]
+  for (const peer of allPeers.slice(0, 5)) {
+    await pool.addPeer(peer.host, peer.port, 'mainnet')
+    console.log(`Added peer: ${peer.displayAddress}`)
+  }
+  
+  // Now use the pool for block retrieval
+  const block = await pool.getBlockByHeight(5000000)
+  console.log(`Retrieved block ${block.height}`)
+  
+  await pool.shutdown()
+}
+
+setupPoolWithDnsDiscovery().catch(console.error)
+```
+
+### Custom DNS Introducers
+
+```javascript
+const client = new DnsDiscoveryClient()
+
+// Use custom introducers
+const customIntroducers = [
+  'seeder.dexie.space',
+  'chia.hoffmang.com'
+]
+
+const result = await client.discoverPeers(customIntroducers, 8444)
+console.log(`Found ${result.totalCount} peers from custom introducers`)
+```
+
+### Individual DNS Resolution
+
+```javascript
+const client = new DnsDiscoveryClient()
+const hostname = 'dns-introducer.chia.net'
+
+// Resolve specific protocols
+try {
+  const ipv4 = await client.resolveIpv4(hostname)
+  console.log(`IPv4 addresses: ${ipv4.addresses.join(', ')}`)
+} catch (error) {
+  console.log(`IPv4 resolution failed: ${error.message}`)
+}
+
+try {
+  const ipv6 = await client.resolveIpv6(hostname)
+  console.log(`IPv6 addresses: ${ipv6.addresses.join(', ')}`)
+} catch (error) {
+  console.log(`IPv6 resolution failed: ${error.message}`)
+}
+
+// Or resolve both at once
+const both = await client.resolveBoth(hostname, 8444)
+console.log(`Combined: ${both.totalCount} addresses`)
+```
+
+
+
+### Error Handling
+
+```javascript
+const client = new DnsDiscoveryClient()
+
+try {
+  const result = await client.discoverMainnetPeers()
+  console.log(`Discovery successful: ${result.totalCount} peers`)
+} catch (error) {
+  console.error('Discovery failed:', error.message)
+  
+  // Handle different error types
+  if (error.message.includes('NoPeersFound')) {
+    console.log('No peers found from any introducer')
+  } else if (error.message.includes('ResolutionFailed')) {
+    console.log('DNS resolution failed')
+  }
+}
+```
+
+### Key Features
+
+- **Dual Stack Support**: Separate IPv4 and IPv6 peer lists
+- **Proper DNS Lookups**: Uses A records for IPv4, AAAA records for IPv6
+- **Built-in Networks**: Ready configurations for mainnet and testnet11
+- **Custom Introducers**: Support for any DNS introducers
+- **IPv6 URL Formatting**: Automatic bracket formatting for IPv6 addresses
+- **Type Safety**: Full TypeScript support with detailed type definitions
+
 ## TypeScript Usage
 
 ```typescript
 import { 
   ChiaBlockListener, 
   ChiaPeerPool,
+  DnsDiscoveryClient,
   BlockReceivedEvent, 
   PeerConnectedEvent, 
   PeerDisconnectedEvent,
   NewPeakHeightEvent,
+  DiscoveryResultJS,
+  PeerAddressJS,
+  AddressResult,
   CoinRecord,
   CoinSpend,
   initTracing,
@@ -617,6 +854,29 @@ async function fetchHistoricalData() {
   console.log(`Pool has ${peers.length} active peers`)
   console.log(`Current peak: ${peak || 'No peak yet'}`)
 }
+
+// TypeScript DNS Discovery
+async function typedDnsDiscovery(): Promise<void> {
+  const client = new DnsDiscoveryClient()
+  
+  // Type-safe discovery
+  const result: DiscoveryResultJS = await client.discoverMainnetPeers()
+  
+  // Access with full type safety
+  result.ipv4Peers.forEach((peer: PeerAddressJS) => {
+    console.log(`IPv4: ${peer.host}:${peer.port} (${peer.displayAddress})`)
+  })
+  
+  result.ipv6Peers.forEach((peer: PeerAddressJS) => {
+    console.log(`IPv6: ${peer.displayAddress} (isIpv6: ${peer.isIpv6})`)
+  })
+  
+  // Individual resolution with types
+  const ipv4Result: AddressResult = await client.resolveIpv4('dns-introducer.chia.net')
+  const ipv6Result: AddressResult = await client.resolveIpv6('dns-introducer.chia.net')
+  
+  console.log(`IPv4 count: ${ipv4Result.count}, IPv6 count: ${ipv6Result.count}`)
+}
 ```
 
 ## Advanced Usage
@@ -688,6 +948,8 @@ const eventTypes = getEventTypes()
 console.log(eventTypes)
 // Output: { blockReceived: "blockReceived", peerConnected: "peerConnected", peerDisconnected: "peerDisconnected" }
 ```
+
+
 
 ## Performance Tips
 

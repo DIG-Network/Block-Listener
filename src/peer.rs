@@ -362,8 +362,10 @@ impl PeerConnection {
                                             Ok(respond_block) => {
                                                 let block = respond_block.block;
                                                 info!(
-                                                    "Received block at height {}",
-                                                    block.reward_chain_block.height
+                                                    "Received block at height {} - transactions_generator: {} bytes, has_foliage_transaction_block: {}",
+                                                    block.reward_chain_block.height,
+                                                    block.transactions_generator.as_ref().map(|g| g.len()).unwrap_or(0),
+                                                    block.foliage_transaction_block.is_some()
                                                 );
                                                 return Ok(block);
                                             }
