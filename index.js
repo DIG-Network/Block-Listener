@@ -310,10 +310,10 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { getEventTypes, ChiaBlockListener, ChiaPeerPool, DnsDiscoveryClient, initTracing } = nativeBinding
+const { DnsDiscoveryClient, getEventTypes, ChiaBlockListener, ChiaPeerPool, initTracing } = nativeBinding
 
+module.exports.DnsDiscoveryClient = DnsDiscoveryClient
 module.exports.getEventTypes = getEventTypes
 module.exports.ChiaBlockListener = ChiaBlockListener
 module.exports.ChiaPeerPool = ChiaPeerPool
-module.exports.DnsDiscoveryClient = DnsDiscoveryClient
 module.exports.initTracing = initTracing

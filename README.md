@@ -472,7 +472,7 @@ main().catch(console.error)
 
 #### Rate Limiting
 
-The pool automatically enforces a 50ms rate limit per peer for maximum performance while preventing node overload:
+The pool automatically enforces a 500ms rate limit per peer for maximum performance while preventing node overload:
 
 ```javascript
 // Rapid requests are automatically queued and distributed

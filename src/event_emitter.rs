@@ -737,8 +737,8 @@ impl ChiaBlockListener {
                         puzzle_hash: spend.coin.puzzle_hash.clone(),
                         amount: spend.coin.amount.to_string(),
                     },
-                    puzzle_reveal: hex::encode(&spend.puzzle_reveal),
-                    solution: hex::encode(&spend.solution),
+                    puzzle_reveal: spend.puzzle_reveal.clone(),
+                    solution: spend.solution.clone(),
                     offset: spend.offset,
                 })
                 .collect(),

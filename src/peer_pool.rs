@@ -5,7 +5,7 @@ use crate::event_emitter::{
 use crate::peer::PeerConnection;
 use chia_generator_parser::{BlockParser, ParsedBlock};
 use chia_protocol::FullBlock;
-use hex::encode as hex_encode;
+
 use napi_derive::napi;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -941,8 +941,8 @@ impl ChiaPeerPool {
                         puzzle_hash: spend.coin.puzzle_hash.clone(),
                         amount: spend.coin.amount.to_string(),
                     },
-                    puzzle_reveal: hex_encode(&spend.puzzle_reveal),
-                    solution: hex_encode(&spend.solution),
+                    puzzle_reveal: spend.puzzle_reveal.clone(),
+                    solution: spend.solution.clone(),
                     offset: spend.offset,
                 })
                 .collect(),
