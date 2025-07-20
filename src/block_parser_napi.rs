@@ -178,7 +178,10 @@ impl ChiaBlockParser {
     /// Parse a FullBlock from hex string
     #[napi]
     pub fn parse_full_block_from_hex(&self, block_hex: String) -> Result<ParsedBlockJS> {
-        debug!("Parsing FullBlock from hex string of length {}", block_hex.len());
+        debug!(
+            "Parsing FullBlock from hex string of length {}",
+            block_hex.len()
+        );
 
         let block_bytes = hex::decode(&block_hex)
             .map_err(|e| Error::new(Status::InvalidArg, format!("Hex decode error: {e}")))?;
@@ -193,7 +196,10 @@ impl ChiaBlockParser {
 
     /// Extract generator from block bytes
     #[napi]
-    pub fn extract_generator_from_block_bytes(&self, block_bytes: Buffer) -> Result<Option<String>> {
+    pub fn extract_generator_from_block_bytes(
+        &self,
+        block_bytes: Buffer,
+    ) -> Result<Option<String>> {
         debug!("Extracting generator from {} bytes", block_bytes.len());
 
         let block = FullBlock::from_bytes(&block_bytes).map_err(|e| {
@@ -217,7 +223,10 @@ impl ChiaBlockParser {
         &self,
         block_bytes: Buffer,
     ) -> Result<BlockHeightInfoJS> {
-        debug!("Getting height and tx status from {} bytes", block_bytes.len());
+        debug!(
+            "Getting height and tx status from {} bytes",
+            block_bytes.len()
+        );
 
         let block = FullBlock::from_bytes(&block_bytes).map_err(|e| {
             Error::new(
