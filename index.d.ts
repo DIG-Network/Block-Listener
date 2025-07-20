@@ -22,6 +22,41 @@ export interface AddressResult {
   addresses: Array<string>
   count: number
 }
+export interface CoinInfoJs {
+  parentCoinInfo: string
+  puzzleHash: string
+  amount: string
+}
+export interface CoinSpendInfoJs {
+  coin: CoinInfoJs
+  puzzleReveal: string
+  solution: string
+  realData: boolean
+  parsingMethod: string
+  offset: number
+  createdCoins: Array<CoinInfoJs>
+}
+export interface ParsedBlockJs {
+  height: number
+  weight: string
+  headerHash: string
+  timestamp?: number
+  coinAdditions: Array<CoinInfoJs>
+  coinRemovals: Array<CoinInfoJs>
+  coinSpends: Array<CoinSpendInfoJs>
+  coinCreations: Array<CoinInfoJs>
+  hasTransactionsGenerator: boolean
+  generatorSize?: number
+}
+export interface GeneratorBlockInfoJs {
+  prevHeaderHash: string
+  transactionsGenerator?: string
+  transactionsGeneratorRefList: Array<number>
+}
+export interface BlockHeightInfoJs {
+  height: number
+  isTransactionBlock: boolean
+}
 export interface EventTypes {
   blockReceived: string
   peerConnected: string
@@ -69,6 +104,20 @@ export interface NewPeakHeightEvent {
   peerId: string
 }
 export declare function initTracing(): void
+export declare class ChiaBlockParser {
+  /** Create a new block parser */
+  constructor()
+  /** Parse a FullBlock from bytes */
+  parseFullBlockFromBytes(blockBytes: Buffer): ParsedBlockJs
+  /** Parse a FullBlock from hex string */
+  parseFullBlockFromHex(blockHex: string): ParsedBlockJs
+  /** Extract generator from block bytes */
+  extractGeneratorFromBlockBytes(blockBytes: Buffer): string | null
+  /** Get block height and transaction status from block bytes */
+  getHeightAndTxStatusFromBlockBytes(blockBytes: Buffer): BlockHeightInfoJs
+  /** Parse block info from block bytes */
+  parseBlockInfoFromBytes(blockBytes: Buffer): GeneratorBlockInfoJs
+}
 export declare class DnsDiscoveryClient {
   /** Create a new DNS discovery client */
   constructor()

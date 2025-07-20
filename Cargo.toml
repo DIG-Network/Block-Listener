@@ -26,6 +26,7 @@ native-tls = { version = "0.2", features = ["vendored"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
+hex = "0.4"
 
 # Utilities
 thiserror = "1"

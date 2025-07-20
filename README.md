@@ -757,12 +757,358 @@ try {
 - **IPv6 URL Formatting**: Automatic bracket formatting for IPv6 addresses
 - **Type Safety**: Full TypeScript support with detailed type definitions
 
+## ChiaBlockParser Usage
+
+The `ChiaBlockParser` provides direct access to the Rust-based block parsing engine, enabling efficient parsing of Chia FullBlock data with complete control over the parsing process. This is ideal for applications that need to process block data from external sources or implement custom block analysis.
+
+### Basic Block Parsing
+
+```javascript
+const { ChiaBlockParser, initTracing } = require('@dignetwork/chia-block-listener')
+
+async function parseBlockData() {
+  // Initialize tracing
+  initTracing()
+  
+  // Create a block parser instance
+  const parser = new ChiaBlockParser()
+  
+  // Parse a block from hex string
+  const blockHex = "your_full_block_hex_data_here"
+  const parsedBlock = parser.parseFullBlockFromHex(blockHex)
+  
+  console.log(`Parsed block ${parsedBlock.height}:`)
+  console.log(`  Header hash: ${parsedBlock.headerHash}`)
+  console.log(`  Weight: ${parsedBlock.weight}`)
+  console.log(`  Timestamp: ${new Date(parsedBlock.timestamp * 1000)}`)
+  console.log(`  Coin additions: ${parsedBlock.coinAdditions.length}`)
+  console.log(`  Coin removals: ${parsedBlock.coinRemovals.length}`)
+  console.log(`  Coin spends: ${parsedBlock.coinSpends.length}`)
+  console.log(`  Has generator: ${parsedBlock.hasTransactionsGenerator}`)
+  
+  // Access detailed coin spend information
+  parsedBlock.coinSpends.forEach((spend, index) => {
+    console.log(`  Spend ${index + 1}:`)
+    console.log(`    Coin: ${spend.coin.amount} mojos`)
+    console.log(`    Puzzle hash: ${spend.coin.puzzleHash}`)
+    console.log(`    Puzzle reveal: ${spend.puzzleReveal.substring(0, 100)}...`)
+    console.log(`    Solution: ${spend.solution.substring(0, 100)}...`)
+    console.log(`    Created coins: ${spend.createdCoins.length}`)
+  })
+}
+
+parseBlockData().catch(console.error)
+```
+
+### ChiaBlockParser Class
+
+#### Constructor
+
+```javascript
+const parser = new ChiaBlockParser()
+```
+
+Creates a new block parser instance with access to the full Rust parsing engine.
+
+#### Methods
+
+##### `parseFullBlockFromBytes(blockBytes): ParsedBlockJs`
+
+Parses a FullBlock from raw bytes.
+
+**Parameters:**
+- `blockBytes` (Buffer): The serialized FullBlock data
+
+**Returns:** A `ParsedBlockJs` object containing all parsed block information
+
+```javascript
+const fs = require('fs')
+const blockData = fs.readFileSync('block.bin')
+const parsedBlock = parser.parseFullBlockFromBytes(blockData)
+```
+
+##### `parseFullBlockFromHex(blockHex): ParsedBlockJs`
+
+Parses a FullBlock from a hex-encoded string.
+
+**Parameters:**
+- `blockHex` (string): The hex-encoded FullBlock data
+
+**Returns:** A `ParsedBlockJs` object containing all parsed block information
+
+```javascript
+const blockHex = "deadbeef..." // Your hex-encoded block data
+const parsedBlock = parser.parseFullBlockFromHex(blockHex)
+```
+
+##### `extractGeneratorFromBlockBytes(blockBytes): string | null`
+
+Extracts only the transactions generator from a block without full parsing.
+
+**Parameters:**
+- `blockBytes` (Buffer): The serialized FullBlock data
+
+**Returns:** Hex-encoded generator bytecode or `null` if no generator exists
+
+```javascript
+const blockData = fs.readFileSync('block.bin')
+const generator = parser.extractGeneratorFromBlockBytes(blockData)
+if (generator) {
+  console.log(`Generator size: ${generator.length / 2} bytes`)
+}
+```
+
+##### `getHeightAndTxStatusFromBlockBytes(blockBytes): BlockHeightInfoJs`
+
+Quickly extracts basic block information without full parsing.
+
+**Parameters:**
+- `blockBytes` (Buffer): The serialized FullBlock data
+
+**Returns:** A `BlockHeightInfoJs` object with height and transaction status
+
+```javascript
+const blockData = fs.readFileSync('block.bin')
+const info = parser.getHeightAndTxStatusFromBlockBytes(blockData)
+console.log(`Block ${info.height}, has transactions: ${info.isTransactionBlock}`)
+```
+
+##### `parseBlockInfoFromBytes(blockBytes): GeneratorBlockInfoJs`
+
+Extracts generator-related block metadata.
+
+**Parameters:**
+- `blockBytes` (Buffer): The serialized FullBlock data
+
+**Returns:** A `GeneratorBlockInfoJs` object with generator metadata
+
+```javascript
+const blockData = fs.readFileSync('block.bin')
+const blockInfo = parser.parseBlockInfoFromBytes(blockData)
+console.log(`Previous hash: ${blockInfo.prevHeaderHash}`)
+console.log(`Generator refs: ${blockInfo.transactionsGeneratorRefList.length}`)
+```
+
+### Advanced Parsing Features
+
+#### Batch Block Processing
+
+```javascript
+const parser = new ChiaBlockParser()
+const fs = require('fs')
+const path = require('path')
+
+// Process multiple block files
+const blockFiles = fs.readdirSync('./blocks/').filter(f => f.endsWith('.bin'))
+
+const stats = {
+  totalBlocks: 0,
+  totalSpends: 0,
+  totalCoins: 0,
+  generatorBlocks: 0
+}
+
+for (const filename of blockFiles) {
+  const blockData = fs.readFileSync(path.join('./blocks/', filename))
+  
+  try {
+    const parsed = parser.parseFullBlockFromBytes(blockData)
+    
+    stats.totalBlocks++
+    stats.totalSpends += parsed.coinSpends.length
+    stats.totalCoins += parsed.coinAdditions.length
+    
+    if (parsed.hasTransactionsGenerator) {
+      stats.generatorBlocks++
+    }
+    
+    console.log(`Processed block ${parsed.height} with ${parsed.coinSpends.length} spends`)
+    
+  } catch (error) {
+    console.error(`Failed to parse ${filename}:`, error.message)
+  }
+}
+
+console.log('\nBatch processing complete:')
+console.log(`  Blocks processed: ${stats.totalBlocks}`)
+console.log(`  Total spends: ${stats.totalSpends}`)
+console.log(`  Total coins: ${stats.totalCoins}`)
+console.log(`  Generator blocks: ${stats.generatorBlocks}`)
+```
+
+#### Generator Analysis
+
+```javascript
+const parser = new ChiaBlockParser()
+
+function analyzeBlockGenerator(blockHex) {
+  // Parse the full block
+  const parsed = parser.parseFullBlockFromHex(blockHex)
+  
+  if (!parsed.hasTransactionsGenerator) {
+    console.log('Block has no generator')
+    return
+  }
+  
+  // Extract just the generator for analysis
+  const blockBytes = Buffer.from(blockHex, 'hex')
+  const generator = parser.extractGeneratorFromBlockBytes(blockBytes)
+  
+  console.log(`Generator Analysis for Block ${parsed.height}:`)
+  console.log(`  Generator size: ${parsed.generatorSize} bytes`)
+  console.log(`  Hex length: ${generator.length} characters`)
+  console.log(`  Coin spends extracted: ${parsed.coinSpends.length}`)
+  console.log(`  Coins created: ${parsed.coinCreations.length}`)
+  
+  // Analyze coin spends
+  parsed.coinSpends.forEach((spend, i) => {
+    console.log(`  Spend ${i + 1}:`)
+    console.log(`    Amount: ${spend.coin.amount} mojos`)
+    console.log(`    Puzzle size: ${spend.puzzleReveal.length / 2} bytes`)
+    console.log(`    Solution size: ${spend.solution.length / 2} bytes`)
+    console.log(`    Creates ${spend.createdCoins.length} new coins`)
+  })
+}
+
+// Example usage
+const blockHex = "your_generator_block_hex"
+analyzeBlockGenerator(blockHex)
+```
+
+#### Integration with Other Components
+
+```javascript
+const { ChiaBlockParser, ChiaPeerPool, DnsDiscoveryClient } = require('@dignetwork/chia-block-listener')
+
+async function integratedBlockAnalysis() {
+  // Set up components
+  const parser = new ChiaBlockParser()
+  const pool = new ChiaPeerPool()
+  const discovery = new DnsDiscoveryClient()
+  
+  // Discover and connect to peers
+  const peers = await discovery.discoverMainnetPeers()
+  for (const peer of peers.ipv4Peers.slice(0, 3)) {
+    await pool.addPeer(peer.host, peer.port, 'mainnet')
+  }
+  
+  // Fetch blocks and parse with enhanced detail
+  const heights = [5000000, 5000001, 5000002]
+  
+  for (const height of heights) {
+    // Get block using peer pool
+    const blockEvent = await pool.getBlockByHeight(height)
+    
+    // For more detailed analysis, you can also parse with ChiaBlockParser
+    // if you have access to the raw block bytes
+    console.log(`Block ${height}:`)
+    console.log(`  From peer: ${blockEvent.peerId}`)
+    console.log(`  Coin spends: ${blockEvent.coinSpends.length}`)
+    console.log(`  Has generator: ${blockEvent.hasTransactionsGenerator}`)
+    
+    // Analyze puzzle patterns
+    const puzzleHashes = new Set()
+    blockEvent.coinSpends.forEach(spend => {
+      puzzleHashes.add(spend.coin.puzzleHash)
+    })
+    console.log(`  Unique puzzle hashes: ${puzzleHashes.size}`)
+  }
+  
+  await pool.shutdown()
+}
+
+integratedBlockAnalysis().catch(console.error)
+```
+
+### Data Types
+
+#### `ParsedBlockJs`
+
+```typescript
+interface ParsedBlockJs {
+  height: number                     // Block height
+  weight: string                     // Block weight as string
+  headerHash: string                 // Block header hash (hex)
+  timestamp?: number                 // Block timestamp (Unix time)
+  coinAdditions: CoinInfoJs[]        // New coins created
+  coinRemovals: CoinInfoJs[]         // Coins spent
+  coinSpends: CoinSpendInfoJs[]      // Detailed spend information
+  coinCreations: CoinInfoJs[]        // Coins created by spends
+  hasTransactionsGenerator: boolean  // Whether block has generator
+  generatorSize?: number             // Generator size in bytes
+}
+```
+
+#### `CoinInfoJs`
+
+```typescript
+interface CoinInfoJs {
+  parentCoinInfo: string  // Parent coin ID (hex)
+  puzzleHash: string      // Puzzle hash (hex)
+  amount: string          // Amount as string (to avoid JS precision issues)
+}
+```
+
+#### `CoinSpendInfoJs`
+
+```typescript
+interface CoinSpendInfoJs {
+  coin: CoinInfoJs                // The coin being spent
+  puzzleReveal: string            // CLVM puzzle bytecode (hex)
+  solution: string                // CLVM solution bytecode (hex)
+  realData: boolean               // Whether this is real transaction data
+  parsingMethod: string           // Method used for parsing
+  offset: number                  // Offset in generator bytecode
+  createdCoins: CoinInfoJs[]      // Coins created by this spend
+}
+```
+
+#### `GeneratorBlockInfoJs`
+
+```typescript
+interface GeneratorBlockInfoJs {
+  prevHeaderHash: string                    // Previous block hash (hex)
+  transactionsGenerator?: string            // Generator bytecode (hex)
+  transactionsGeneratorRefList: number[]    // Referenced block heights
+}
+```
+
+#### `BlockHeightInfoJs`
+
+```typescript
+interface BlockHeightInfoJs {
+  height: number              // Block height
+  isTransactionBlock: boolean // Whether block contains transactions
+}
+```
+
+### When to Use ChiaBlockParser
+
+- **Use ChiaBlockParser when:**
+  - You have raw block data from external sources
+  - You need detailed CLVM puzzle and solution analysis
+  - You're implementing custom block processing logic
+  - You need to extract generators for analysis
+  - You want fine-grained control over parsing
+
+- **Use with ChiaPeerPool when:**
+  - You need both block retrieval and detailed parsing
+  - You're analyzing historical blocks in detail
+  - You want to combine network access with parsing
+
+- **Use with ChiaBlockListener when:**
+  - You're processing real-time blocks with custom logic
+  - You need both live monitoring and detailed parsing
+
+The `ChiaBlockParser` complements the other classes by providing the lowest-level access to the Chia block parsing engine, enabling sophisticated analysis and processing workflows.
+
 ## TypeScript Usage
 
 ```typescript
 import { 
   ChiaBlockListener, 
   ChiaPeerPool,
+  ChiaBlockParser,
   DnsDiscoveryClient,
   BlockReceivedEvent, 
   PeerConnectedEvent, 
@@ -773,6 +1119,11 @@ import {
   AddressResult,
   CoinRecord,
   CoinSpend,
+  ParsedBlockJs,
+  CoinInfoJs,
+  CoinSpendInfoJs,
+  GeneratorBlockInfoJs,
+  BlockHeightInfoJs,
   initTracing,
   getEventTypes
 } from '@dignetwork/chia-block-listener'
@@ -876,6 +1227,52 @@ async function typedDnsDiscovery(): Promise<void> {
   const ipv6Result: AddressResult = await client.resolveIpv6('dns-introducer.chia.net')
   
   console.log(`IPv4 count: ${ipv4Result.count}, IPv6 count: ${ipv6Result.count}`)
+}
+
+// TypeScript ChiaBlockParser
+async function typedBlockParsing(): Promise<void> {
+  const parser = new ChiaBlockParser()
+  
+  // Type-safe block parsing from hex
+  const blockHex = "your_block_hex_data"
+  const parsedBlock: ParsedBlockJs = parser.parseFullBlockFromHex(blockHex)
+  
+  console.log(`Parsed block ${parsedBlock.height}:`)
+  console.log(`  Header hash: ${parsedBlock.headerHash}`)
+  console.log(`  Weight: ${parsedBlock.weight}`)
+  console.log(`  Coin additions: ${parsedBlock.coinAdditions.length}`)
+  console.log(`  Coin spends: ${parsedBlock.coinSpends.length}`)
+  console.log(`  Has generator: ${parsedBlock.hasTransactionsGenerator}`)
+  
+  // Type-safe access to coin spend details
+  parsedBlock.coinSpends.forEach((spend: CoinSpendInfoJs) => {
+    const coin: CoinInfoJs = spend.coin
+    console.log(`Spend: ${coin.amount} mojos from ${coin.puzzleHash}`)
+    console.log(`  Puzzle reveal size: ${spend.puzzleReveal.length / 2} bytes`)
+    console.log(`  Solution size: ${spend.solution.length / 2} bytes`)
+    console.log(`  Creates ${spend.createdCoins.length} new coins`)
+    console.log(`  Real data: ${spend.realData}`)
+    console.log(`  Parsing method: ${spend.parsingMethod}`)
+  })
+  
+  // Type-safe generator extraction
+  const blockBytes = Buffer.from(blockHex, 'hex')
+  const generator: string | null = parser.extractGeneratorFromBlockBytes(blockBytes)
+  if (generator) {
+    console.log(`Generator found: ${generator.length / 2} bytes`)
+  }
+  
+  // Type-safe height and tx status
+  const heightInfo: BlockHeightInfoJs = parser.getHeightAndTxStatusFromBlockBytes(blockBytes)
+  console.log(`Block ${heightInfo.height}, is transaction block: ${heightInfo.isTransactionBlock}`)
+  
+  // Type-safe block info extraction
+  const blockInfo: GeneratorBlockInfoJs = parser.parseBlockInfoFromBytes(blockBytes)
+  console.log(`Previous hash: ${blockInfo.prevHeaderHash}`)
+  console.log(`Generator refs: ${blockInfo.transactionsGeneratorRefList.length}`)
+  if (blockInfo.transactionsGenerator) {
+    console.log(`Generator size: ${blockInfo.transactionsGenerator.length / 2} bytes`)
+  }
 }
 ```
 
